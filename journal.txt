@@ -1,0 +1,61 @@
+Thu Mar  7 10:05:17 CET 2013
+
+* Tentative de synthèse de la réunion à l'ENSTA:
+
+- Nous sommes d'accord sur l'aspect vérification 
+  (et non inférence) de l'outil. Cela suppose
+  la définition d'une syntaxe concrète pour les annotations
+  utilisateurs à pousser jusqu'au langage sur lequel 
+  nous allons faire une analyse d'effets ou de flots. 
+
+  En première approximation, il semble nécessaire d'annoter
+  les flèches comme ceci :
+
+    exception Not_found
+
+    let find t x 
+    : { Not_found } value = ...
+
+    let find : tree -> key -{Not_found} -> value = 
+        ...
+
+- Les algorithmes semblent plus simples sur des langages
+  typés et sont définis par règle sur les cas de la syntaxe.
+  Le problème avec le compilateur Caml, c'est que le dernier
+  langage typé est Typedtree et est gigantesque. 
+
+  Du coup, on aimerait plutôt travailler sur le langage Lambda
+  en y faisant apparaître des types. Fabrice avait proposé 
+  de ne travailler que sur des approximations des types à
+  l'aide d'une algèbre de type de la forme:
+
+  T := ι | α | T -{ ε }-> T
+
+  exemple : a -> b -{ Not_found }-> ..
+
+  Cependant, à notre avis, on ne peut pas approcher les types
+  de cette façon sans perdre en complétude. Par exemple, on
+  veut voir apparaître la structure des types sommes pour 
+  y débusquer des flèches avec effets.
+
+  type list =
+  | Nil
+  | Cons of (int -{Not_found}-> int) * list
+
+* Proposition :
+
+  Définir un Lambda typé ce qui suppose :
+
+  - définir une algèbre de type la plus simple possible.
+    (des types purement structurels?)
+
+  - spécifier et écrire un vérificateur de type pour ce
+    lambda typé.         
+
+  - étendre la traduction de Typedexpr vers ce Lambda typé.
+
+  By-product:
+
+  - Avoir un lambda typé pourrait autoriser de nouvelles optimisations
+  (dirigées par les types) dans le back-end du compilateur comme la
+  monomorphisation par exemple.
