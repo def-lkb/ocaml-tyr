@@ -371,18 +371,18 @@ let transl_primitive loc p =
   match prim with
     Plazyforce ->
       let parm = Ident.create "prim" in
-      Lfunction(Curried, [parm], Matching.inline_lazy_force (Lvar parm) Location.none)
+      Lfunction(Curried, [parm], Matching.inline_lazy_force (Lvar (parm,Iota)) Location.none)
   | _ ->
       let rec make_params n =
         if n <= 0 then [] else Ident.create "prim" :: make_params (n-1) in
       let params = make_params p.prim_arity in
-      Lfunction(Curried, params, Lprim(prim, List.map (fun id -> Lvar id) params))
+      Lfunction(Curried, params, Lprim(prim, List.map (fun id -> Lvar (id,Iota)) params))
 
 (* To check the well-formedness of r.h.s. of "let rec" definitions *)
 
 let check_recursive_lambda idlist lam =
   let rec check_top idlist = function
-    | Lvar v -> not (List.mem v idlist)
+    | Lvar (v,_) -> not (List.mem v idlist)
     | Llet (_, _, _, _) as lam when check_recursive_recordwith idlist lam ->
         true
     | Llet(str, id, arg, body) ->
@@ -436,10 +436,10 @@ let check_recursive_lambda idlist lam =
     | _ -> false
 
   and check_recordwith_updates idlist id1 = function
-    | Lsequence (Lprim ((Psetfield _ | Psetfloatfield _), [Lvar id2; e1]), cont)
+    | Lsequence (Lprim ((Psetfield _ | Psetfloatfield _), [Lvar (id2,Iota); e1]), cont)
         -> id2 = id1 && check idlist e1
            && check_recordwith_updates idlist id1 cont
-    | Lvar id2 -> id2 = id1
+    | Lvar (id2,_) -> id2 = id1
     | _ -> false
 
   in check_top idlist lam
@@ -579,12 +579,13 @@ and transl_exp0 e =
       if public_send || p.prim_name = "%sendself" then
         let kind = if public_send then Public else Self in
         let obj = Ident.create "obj" and meth = Ident.create "meth" in
-        Lfunction(Curried, [obj; meth], Lsend(kind, Lvar meth, Lvar obj, [], e.exp_loc))
+        Lfunction(Curried, [obj; meth], Lsend(kind, Lvar (meth,Iota), Lvar (obj,Iota), [], e.exp_loc))
       else if p.prim_name = "%sendcache" then
         let obj = Ident.create "obj" and meth = Ident.create "meth" in
         let cache = Ident.create "cache" and pos = Ident.create "pos" in
         Lfunction(Curried, [obj; meth; cache; pos],
-                  Lsend(Cached, Lvar meth, Lvar obj, [Lvar cache; Lvar pos], e.exp_loc))
+                  Lsend(Cached, Lvar (meth,Iota), Lvar (obj,Iota), [Lvar
+                  (cache,Iota); Lvar (pos,Iota)], e.exp_loc))
       else
         transl_primitive e.exp_loc p
   | Texp_ident(path, _, {val_kind = Val_anc _}) ->
@@ -652,7 +653,7 @@ and transl_exp0 e =
   | Texp_try(body, pat_expr_list) ->
       let id = name_pattern "exn" pat_expr_list in
       Ltrywith(transl_exp body, id,
-               Matching.for_trywith (Lvar id) (transl_cases pat_expr_list))
+               Matching.for_trywith (Lvar (id,Iota)) (transl_cases pat_expr_list))
   | Texp_tuple el ->
       let ll = transl_list el in
       begin try
@@ -746,7 +747,7 @@ and transl_exp0 e =
       let obj = transl_exp expr in
       let lam =
         match met with
-          Tmeth_val id -> Lsend (Self, Lvar id, obj, [], e.exp_loc)
+          Tmeth_val id -> Lsend (Self, Lvar (id,Iota), obj, [], e.exp_loc)
         | Tmeth_name nm ->
             let (tag, cache) = Translobj.meth obj nm in
             let kind = if cache = [] then Public else Cached in
@@ -766,9 +767,9 @@ and transl_exp0 e =
                   Location.none),
            List.fold_right
              (fun (path, _, expr) rem ->
-                Lsequence(transl_setinstvar (Lvar cpy) path expr, rem))
+                Lsequence(transl_setinstvar (Lvar (cpy,Iota)) path expr, rem))
              modifs
-             (Lvar cpy))
+             (Lvar (cpy,Iota)))
   | Texp_letmodule(id, _, modl, body) ->
       Llet(Strict, id, !transl_module Tcoerce_none None modl, transl_exp body)
   | Texp_pack modl ->
@@ -869,7 +870,7 @@ and transl_apply lam sargs loc =
           | _ ->
               let id = Ident.create name in
               defs := (id, lam) :: !defs;
-              Lvar id
+              Lvar (id,Iota)
         in
         let args, args' =
           if List.for_all (fun (_,opt) -> opt = Optional) args then [], args
@@ -880,7 +881,7 @@ and transl_apply lam sargs loc =
         and l = List.map (fun (arg, opt) -> may_map (protect "arg") arg, opt) l
         and id_arg = Ident.create "param" in
         let body =
-          match build_apply handle ((Lvar id_arg, optional)::args') l with
+          match build_apply handle ((Lvar (id_arg,Iota), optional)::args') l with
             Lfunction(Curried, ids, lam) ->
               Lfunction(Curried, id_arg::ids, lam)
           | Levent(Lfunction(Curried, ids, lam), _) ->
@@ -906,7 +907,7 @@ and transl_function loc untuplify_fn repr partial pat_expr_list =
       let ((_, params), body) =
         transl_function exp.exp_loc false repr partial' pl in
       ((Curried, param :: params),
-       Matching.for_function loc None (Lvar param) [pat, body] partial)
+       Matching.for_function loc None (Lvar (param,Iota)) [pat, body] partial)
   | ({pat_desc = Tpat_tuple pl}, _) :: _ when untuplify_fn ->
       begin try
         let size = List.length pl in
@@ -921,13 +922,13 @@ and transl_function loc untuplify_fn repr partial pat_expr_list =
       with Matching.Cannot_flatten ->
         let param = name_pattern "param" pat_expr_list in
         ((Curried, [param]),
-         Matching.for_function loc repr (Lvar param)
+         Matching.for_function loc repr (Lvar (param,Iota))
            (transl_cases pat_expr_list) partial)
       end
   | _ ->
       let param = name_pattern "param" pat_expr_list in
       ((Curried, [param]),
-       Matching.for_function loc repr (Lvar param)
+       Matching.for_function loc repr (Lvar (param,Iota))
          (transl_cases pat_expr_list) partial)
 
 and transl_let rec_flag pat_expr_list body =
@@ -975,7 +976,7 @@ and transl_record all_labels repres lbl_expr_list opt_init_expr =
             match all_labels.(i).lbl_repres with
               Record_regular -> Pfield i
             | Record_float -> Pfloatfield i in
-          lv.(i) <- Lprim(access, [Lvar init_id])
+          lv.(i) <- Lprim(access, [Lvar (init_id,Iota)])
         done
     end;
     List.iter
@@ -1013,13 +1014,13 @@ and transl_record all_labels repres lbl_expr_list opt_init_expr =
         match lbl.lbl_repres with
           Record_regular -> Psetfield(lbl.lbl_pos, maybe_pointer expr)
         | Record_float -> Psetfloatfield lbl.lbl_pos in
-      Lsequence(Lprim(upd, [Lvar copy_id; transl_exp expr]), cont) in
+      Lsequence(Lprim(upd, [Lvar (copy_id,Iota); transl_exp expr]), cont) in
     begin match opt_init_expr with
       None -> assert false
     | Some init_expr ->
         Llet(Strict, copy_id,
              Lprim(Pduprecord (repres, size), [transl_exp init_expr]),
-             List.fold_right update_field lbl_expr_list (Lvar copy_id))
+             List.fold_right update_field lbl_expr_list (Lvar (copy_id,Iota)))
     end
   end
 

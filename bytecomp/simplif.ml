@@ -23,7 +23,7 @@ open Lambda
 exception Real_reference
 
 let rec eliminate_ref id = function
-    Lvar v as lam ->
+    Lvar (v,_) as lam ->
       if Ident.same v id then raise Real_reference else lam
   | Lconst cst as lam -> lam
   | Lapply(e1, el, loc) ->
@@ -37,12 +37,12 @@ let rec eliminate_ref id = function
   | Lletrec(idel, e2) ->
       Lletrec(List.map (fun (v, e) -> (v, eliminate_ref id e)) idel,
               eliminate_ref id e2)
-  | Lprim(Pfield 0, [Lvar v]) when Ident.same v id ->
-      Lvar id
-  | Lprim(Psetfield(0, _), [Lvar v; e]) when Ident.same v id ->
+  | Lprim(Pfield 0, [Lvar (v,Iota)]) when Ident.same v id ->
+      Lvar (id,Iota)
+  | Lprim(Psetfield(0, _), [Lvar (v,Iota); e]) when Ident.same v id ->
       Lassign(id, eliminate_ref id e)
-  | Lprim(Poffsetref delta, [Lvar v]) when Ident.same v id ->
-      Lassign(id, Lprim(Poffsetint delta, [Lvar id]))
+  | Lprim(Poffsetref delta, [Lvar (v,Iota)]) when Ident.same v id ->
+      Lassign(id, Lprim(Poffsetint delta, [Lvar (id,Iota)]))
   | Lprim(p, el) ->
       Lprim(p, List.map (eliminate_ref id) el)
   | Lswitch(e, sw) ->
@@ -232,7 +232,7 @@ let simplify_exits lam =
         let ys = List.map Ident.rename xs in
         let env =
           List.fold_right2
-            (fun x y t -> Ident.add x (Lvar y) t)
+            (fun x y t -> Ident.add x (Lvar (y,Iota)) t)
             xs ys Ident.empty in
         List.fold_right2
           (fun y l r -> Llet (Alias, y, l, r))
@@ -332,7 +332,7 @@ let simplify_lets lam =
 
   let rec count bv = function
   | Lconst cst -> ()
-  | Lvar v ->
+  | Lvar (v,Iota) ->
       use_var bv v 1
   | Lapply(Lfunction(Curried, params, body), args, _)
     when optimize && List.length params = List.length args ->
@@ -344,7 +344,7 @@ let simplify_lets lam =
       count bv l1; List.iter (count bv) ll
   | Lfunction(kind, params, l) ->
       count Tbl.empty l
-  | Llet(str, v, Lvar w, l2) when optimize ->
+  | Llet(str, v, Lvar (w,Iota), l2) when optimize ->
       (* v will be replaced by w in l2, so each occurrence of v in l2
          increases w's refcount *)
       count (bind_var bv v) l2;
@@ -403,12 +403,12 @@ let simplify_lets lam =
    tail call later on. *)
 
   let mklet (kind,v,e1,e2) = match e2 with
-  | Lvar w when optimize && Ident.same v w -> e1
+  | Lvar (w,Iota) when optimize && Ident.same v w -> e1
   | _ -> Llet (kind,v,e1,e2) in
 
 
   let rec simplif = function
-    Lvar v as l ->
+    Lvar (v,Iota) as l ->
       begin try
         Hashtbl.find subst v
       with Not_found ->
@@ -423,8 +423,8 @@ let simplify_lets lam =
       simplif (beta_reduce params body args)
   | Lapply(l1, ll, loc) -> Lapply(simplif l1, List.map simplif ll, loc)
   | Lfunction(kind, params, l) -> Lfunction(kind, params, simplif l)
-  | Llet(str, v, Lvar w, l2) when optimize ->
-      Hashtbl.add subst v (simplif (Lvar w));
+  | Llet(str, v, Lvar (w,Iota), l2) when optimize ->
+      Hashtbl.add subst v (simplif (Lvar (w,Iota)));
       simplif l2
   | Llet(Strict, v, Lprim(Pmakeblock(0, Mutable), [linit]), lbody)
     when optimize ->

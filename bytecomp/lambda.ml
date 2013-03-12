@@ -125,13 +125,17 @@ type meth_kind = Self | Public | Cached
 
 type shared_code = (int * int) list
 
+type lambda_type =
+  | Iota
+  | Ltarrow of lambda_type
+
 type lambda =
     Lvar of Ident.t
   | Lconst of structured_constant
   | Lapply of lambda * lambda list * Location.t
-  | Lfunction of function_kind * Ident.t list * lambda
-  | Llet of let_kind * Ident.t * lambda * lambda
-  | Lletrec of (Ident.t * lambda) list * lambda
+  | Lfunction of function_kind * (Ident.t * lambda_type) list * lambda
+  | Llet of let_kind * (Ident.t * lambda * lambda_type) * lambda
+  | Lletrec of (Ident.t * lambda * lambda_type) list * lambda
   | Lprim of primitive * lambda list
   | Lswitch of lambda * lambda_switch
   | Lstaticraise of int * lambda list
@@ -170,7 +174,7 @@ let lambda_unit = Lconst const_unit
 
 let rec same l1 l2 =
   match (l1, l2) with
-  | Lvar v1, Lvar v2 ->
+  | Lvar (v1,_), Lvar (v2,_) ->
       Ident.same v1 v2
   | Lconst c1, Lconst c2 ->
       c1 = c2
@@ -228,17 +232,18 @@ and sameswitch sw1 sw2 =
 
 let name_lambda arg fn =
   match arg with
-    Lvar id -> fn id
+    Lvar (id,_) -> fn id
   | _ -> let id = Ident.create "let" in Llet(Strict, id, arg, fn id)
 
+(* FIXME: Iota? *)
 let name_lambda_list args fn =
   let rec name_list names = function
     [] -> fn (List.rev names)
-  | (Lvar id as arg) :: rem ->
+  | (Lvar (id,_) as arg) :: rem ->
       name_list (arg :: names) rem
   | arg :: rem ->
       let id = Ident.create "let" in
-      Llet(Strict, id, arg, name_list (Lvar id :: names) rem) in
+      Llet(Strict, id, arg, name_list (Lvar (id,Iota) :: names) rem) in
   name_list [] args
 
 let rec iter f = function
@@ -319,10 +324,10 @@ let free_ids get l =
   in free l; !fv
 
 let free_variables l =
-  free_ids (function Lvar id -> [id] | _ -> []) l
+  free_ids (function Lvar (id,_) -> [id] | _ -> []) l
 
 let free_methods l =
-  free_ids (function Lsend(Self, Lvar meth, obj, _, _) -> [meth] | _ -> []) l
+  free_ids (function Lsend(Self, Lvar (meth,_), obj, _, _) -> [meth] | _ -> []) l
 
 (* Check if an action has a "when" guard *)
 let raise_count = ref 0
@@ -351,9 +356,10 @@ let rec patch_guarded patch = function
 
 (* Translate an access path *)
 
+(** FIXME: Lift typing information *)
 let rec transl_path = function
     Pident id ->
-      if Ident.global id then Lprim(Pgetglobal id, []) else Lvar id
+      if Ident.global id then Lprim(Pgetglobal id, []) else Lvar (id,Iota)
   | Pdot(p, s, pos) ->
       Lprim(Pfield pos, [transl_path p])
   | Papply(p1, p2) ->
@@ -375,7 +381,7 @@ let rec make_sequence fn = function
 
 let subst_lambda s lam =
   let rec subst = function
-    Lvar id as l ->
+    Lvar (id,_) as l ->
       begin try Ident.find_same id s with Not_found -> l end
   | Lconst sc as l -> l
   | Lapply(fn, args, loc) -> Lapply(subst fn, List.map subst args, loc)
@@ -413,7 +419,7 @@ let subst_lambda s lam =
 
 let bind str var exp body =
   match exp with
-    Lvar var' when Ident.same var var' -> body
+    Lvar (var',_) when Ident.same var var' -> body
   | _ -> Llet(str, var, exp, body)
 
 and commute_comparison = function

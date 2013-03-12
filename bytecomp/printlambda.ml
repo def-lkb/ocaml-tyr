@@ -186,7 +186,7 @@ let primitive ppf = function
       print_bigarray "set" unsafe kind ppf layout
 
 let rec lam ppf = function
-  | Lvar id ->
+  | Lvar (id,_) ->
       Ident.print ppf id
   | Lconst cst ->
       struct_const ppf cst

@@ -59,3 +59,7 @@ Thu Mar  7 10:05:17 CET 2013
   - Avoir un lambda typé pourrait autoriser de nouvelles optimisations
   (dirigées par les types) dans le back-end du compilateur comme la
   monomorphisation par exemple.
+
+
+Tue Mar 12 13:54:30 CET 2013
+

@@ -134,8 +134,10 @@ type meth_kind = Self | Public | Cached
 
 type shared_code = (int * int) list     (* stack size -> code label *)
 
+type lambda_type = Iota
+
 type lambda =
-    Lvar of Ident.t
+    Lvar of Ident.t * lambda_type
   | Lconst of structured_constant
   | Lapply of lambda * lambda list * Location.t
   | Lfunction of function_kind * Ident.t list * lambda
