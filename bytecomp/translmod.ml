@@ -45,15 +45,15 @@ let rec apply_coercion restr arg =
   | Tcoerce_functor(cc_arg, cc_res) ->
       let param = Ident.create "funarg" in
       name_lambda arg (fun id ->
-        Lfunction(Curried, [param],
+        Lfunction(Curried, [param,Lt_bot],
           apply_coercion cc_res
-            (Lapply(Lvar (id,Iota), [apply_coercion cc_arg (Lvar (param,Iota))],
+            (Lapply(Lvar id, [apply_coercion cc_arg (Lvar param)],
                     Location.none))))
   | Tcoerce_primitive p ->
       transl_primitive Location.none p
 
 and apply_coercion_field id (pos, cc) =
-  apply_coercion cc (Lprim(Pfield pos, [Lvar (id,Iota)]))
+  apply_coercion cc (Lprim(Pfield pos, [Lvar id]))
 
 (* Compose two coercions
    apply_coercion c1 (apply_coercion c2 e) behaves like
@@ -215,7 +215,7 @@ let eval_rec_bindings bindings cont =
   | (id, None, rhs) :: rem ->
       patch_forwards rem
   | (id, Some(loc, shape), rhs) :: rem ->
-      Lsequence(Lapply(mod_prim "update_mod", [shape; Lvar (id,Iota); rhs],
+      Lsequence(Lapply(mod_prim "update_mod", [shape; Lvar id; rhs],
                        Location.none),
                 patch_forwards rem)
   in
@@ -244,12 +244,12 @@ let rec transl_module cc rootpath mexp =
       oo_wrap mexp.mod_env true
         (function
         | Tcoerce_none ->
-            Lfunction(Curried, [param],
+            Lfunction(Curried, [param,Lt_bot],
                       transl_module Tcoerce_none bodypath body)
         | Tcoerce_functor(ccarg, ccres) ->
             let param' = Ident.create "funarg" in
-            Lfunction(Curried, [param'],
-                      Llet(Alias, param, apply_coercion ccarg (Lvar (param',Iota)),
+            Lfunction(Curried, [param',Lt_bot],
+                      Llet(Alias, param, apply_coercion ccarg (Lvar param'),
                            transl_module ccres bodypath body))
         | _ ->
             fatal_error "Translmod.transl_module")
@@ -272,7 +272,7 @@ and transl_structure fields cc rootpath = function
       begin match cc with
         Tcoerce_none ->
           Lprim(Pmakeblock(0, Immutable),
-                List.map (fun id -> Lvar (id,Iota)) (List.rev fields))
+                List.map (fun id -> Lvar id) (List.rev fields))
       | Tcoerce_structure pos_cc_list ->
           let v = Array.of_list (List.rev fields) in
           Lprim(Pmakeblock(0, Immutable),
@@ -280,7 +280,7 @@ and transl_structure fields cc rootpath = function
                   (fun (pos, cc) ->
                     match cc with
                       Tcoerce_primitive p -> transl_primitive Location.none p
-                    | _ -> apply_coercion cc (Lvar (v.(pos),Iota)))
+                    | _ -> apply_coercion cc (Lvar v.(pos)))
                   pos_cc_list)
       | _ ->
           fatal_error "Translmod.transl_structure"
@@ -336,7 +336,7 @@ and transl_structure fields cc rootpath = function
         [] ->
           transl_structure newfields cc rootpath rem
       | id :: ids ->
-          Llet(Alias, id, Lprim(Pfield pos, [Lvar (mid,Iota)]),
+          Llet(Alias, id, Lprim(Pfield pos, [Lvar mid]),
                rebind_idents (pos + 1) (id :: newfields) ids) in
       Llet(Strict, mid, transl_module Tcoerce_none None modl,
            rebind_idents 0 fields ids)
@@ -447,7 +447,7 @@ let transl_store_structure glob map prims str =
       let rec store_idents pos = function
         [] -> transl_store (add_idents true ids subst) rem
       | id :: idl ->
-          Llet(Alias, id, Lprim(Pfield pos, [Lvar (mid,Iota)]),
+          Llet(Alias, id, Lprim(Pfield pos, [Lvar mid]),
                Lsequence(store_ident id, store_idents (pos + 1) idl)) in
       Llet(Strict, mid,
            subst_lambda subst (transl_module Tcoerce_none None modl),
@@ -456,7 +456,7 @@ let transl_store_structure glob map prims str =
   and store_ident id =
     try
       let (pos, cc) = Ident.find_same id map in
-      let init_val = apply_coercion cc (Lvar (id,Iota)) in
+      let init_val = apply_coercion cc (Lvar id) in
       Lprim(Psetfield(pos, false), [Lprim(Pgetglobal glob, []); init_val])
     with Not_found ->
       fatal_error("Translmod.store_ident: " ^ Ident.unique_name id)
@@ -600,7 +600,7 @@ let toploop_setvalue id lam =
          [Lconst(Const_base(Const_string (toplevel_name id))); lam],
          Location.none)
 
-let toploop_setvalue_id id = toploop_setvalue id (Lvar (id,Iota))
+let toploop_setvalue_id id = toploop_setvalue id (Lvar id)
 
 let close_toplevel_term lam =
   IdentSet.fold (fun id l -> Llet(Strict, id, toploop_getvalue id, l))
@@ -660,7 +660,7 @@ let transl_toplevel_item item =
         [] ->
           lambda_unit
       | id :: ids ->
-          Lsequence(toploop_setvalue id (Lprim(Pfield pos, [Lvar (mid,Iota)])),
+          Lsequence(toploop_setvalue id (Lprim(Pfield pos, [Lvar mid])),
                     set_idents (pos + 1) ids) in
       Llet(Strict, mid, transl_module Tcoerce_none None modl, set_idents 0 ids)
 

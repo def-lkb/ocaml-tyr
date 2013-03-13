@@ -35,11 +35,11 @@ let share c =
   match c with
     Const_block (n, l) when l <> [] ->
       begin try
-        Lvar (Hashtbl.find consts c, Iota)
+        Lvar (Hashtbl.find consts c)
       with Not_found ->
         let id = Ident.create "shared" in
         Hashtbl.add consts c id;
-        Lvar (id,Iota)
+        Lvar id
       end
   | _ -> Lconst c
 

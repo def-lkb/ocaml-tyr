@@ -125,17 +125,27 @@ type meth_kind = Self | Public | Cached
 
 type shared_code = (int * int) list
 
-type lambda_type =
-  | Iota
-  | Ltarrow of lambda_type
+type lambda_type = 
+  | Lt_top | Lt_bot
+  | Lt_arrow of lambda_type * lambda_type
+  | Lt_value of lambda_val_type
+  | Lt_var of Ident.t
+  | Lt_mu of Ident.t * lambda_type
+
+and lambda_val_type = {
+  blocks : (int * lambda_type list) list;
+  const : [`Any | `Some of int list ];
+}
+
+type lambda_type_env = lambda_type Ident.tbl
 
 type lambda =
     Lvar of Ident.t
   | Lconst of structured_constant
   | Lapply of lambda * lambda list * Location.t
   | Lfunction of function_kind * (Ident.t * lambda_type) list * lambda
-  | Llet of let_kind * (Ident.t * lambda * lambda_type) * lambda
-  | Lletrec of (Ident.t * lambda * lambda_type) list * lambda
+  | Llet of let_kind * Ident.t * lambda * lambda
+  | Lletrec of (Ident.t * lambda) list * lambda
   | Lprim of primitive * lambda list
   | Lswitch of lambda * lambda_switch
   | Lstaticraise of int * lambda list
@@ -174,14 +184,14 @@ let lambda_unit = Lconst const_unit
 
 let rec same l1 l2 =
   match (l1, l2) with
-  | Lvar (v1,_), Lvar (v2,_) ->
+  | Lvar v1, Lvar v2 ->
       Ident.same v1 v2
   | Lconst c1, Lconst c2 ->
       c1 = c2
   | Lapply(a1, bl1, _), Lapply(a2, bl2, _) ->
       same a1 a2 && samelist same bl1 bl2
   | Lfunction(k1, idl1, a1), Lfunction(k2, idl2, a2) ->
-      k1 = k2 && samelist Ident.same idl1 idl2 && same a1 a2
+      k1 = k2 && samelist (fun (i1,t1) (i2,t2) -> Ident.same i1 i2) idl1 idl2 && same a1 a2
   | Llet(k1, id1, a1, b1), Llet(k2, id2, a2, b2) ->
       k1 = k2 && Ident.same id1 id2 && same a1 a2 && same b1 b2
   | Lletrec (bl1, a1), Lletrec (bl2, a2) ->
@@ -232,18 +242,18 @@ and sameswitch sw1 sw2 =
 
 let name_lambda arg fn =
   match arg with
-    Lvar (id,_) -> fn id
+    Lvar id -> fn id
   | _ -> let id = Ident.create "let" in Llet(Strict, id, arg, fn id)
 
-(* FIXME: Iota? *)
+(* FIXME: Lt_bot? *)
 let name_lambda_list args fn =
   let rec name_list names = function
     [] -> fn (List.rev names)
-  | (Lvar (id,_) as arg) :: rem ->
+  | (Lvar id as arg) :: rem ->
       name_list (arg :: names) rem
   | arg :: rem ->
       let id = Ident.create "let" in
-      Llet(Strict, id, arg, name_list (Lvar (id,Iota) :: names) rem) in
+      Llet(Strict, id, arg, name_list (Lvar id :: names) rem) in
   name_list [] args
 
 let rec iter f = function
@@ -304,7 +314,7 @@ let free_ids get l =
     fv := List.fold_right IdentSet.add (get l) !fv;
     match l with
       Lfunction(kind, params, body) ->
-        List.iter (fun param -> fv := IdentSet.remove param !fv) params
+        List.iter (fun (id,ty) -> fv := IdentSet.remove id !fv) params
     | Llet(str, id, arg, body) ->
         fv := IdentSet.remove id !fv
     | Lletrec(decl, body) ->
@@ -324,10 +334,10 @@ let free_ids get l =
   in free l; !fv
 
 let free_variables l =
-  free_ids (function Lvar (id,_) -> [id] | _ -> []) l
+  free_ids (function Lvar id -> [id] | _ -> []) l
 
 let free_methods l =
-  free_ids (function Lsend(Self, Lvar (meth,_), obj, _, _) -> [meth] | _ -> []) l
+  free_ids (function Lsend(Self, Lvar meth, obj, _, _) -> [meth] | _ -> []) l
 
 (* Check if an action has a "when" guard *)
 let raise_count = ref 0
@@ -359,7 +369,7 @@ let rec patch_guarded patch = function
 (** FIXME: Lift typing information *)
 let rec transl_path = function
     Pident id ->
-      if Ident.global id then Lprim(Pgetglobal id, []) else Lvar (id,Iota)
+      if Ident.global id then Lprim(Pgetglobal id, []) else Lvar id
   | Pdot(p, s, pos) ->
       Lprim(Pfield pos, [transl_path p])
   | Papply(p1, p2) ->
@@ -381,7 +391,7 @@ let rec make_sequence fn = function
 
 let subst_lambda s lam =
   let rec subst = function
-    Lvar (id,_) as l ->
+    Lvar id as l ->
       begin try Ident.find_same id s with Not_found -> l end
   | Lconst sc as l -> l
   | Lapply(fn, args, loc) -> Lapply(subst fn, List.map subst args, loc)
@@ -419,7 +429,7 @@ let subst_lambda s lam =
 
 let bind str var exp body =
   match exp with
-    Lvar (var',_) when Ident.same var var' -> body
+    Lvar var' when Ident.same var var' -> body
   | _ -> Llet(str, var, exp, body)
 
 and commute_comparison = function
@@ -431,3 +441,148 @@ and negate_comparison = function
 | Ceq -> Cneq| Cneq -> Ceq
 | Clt -> Cge | Cle -> Cgt
 | Cgt -> Cle | Cge -> Clt
+
+(* Type-check lambda expression *)
+
+type error =
+  | Not_subtype of lambda_type * lambda_type
+  | Cant_apply of lambda_type * lambda_type
+  | Unbound_var of Ident.t
+  | Unbound_tvar of Ident.t
+
+exception Error of error
+let error err = raise (Error err)
+
+  (*| Lt_bot
+  | Lt_arrow of lambda_type * lambda_type
+  | Lt_block of int list * (int * lambda_type list) list
+  | Lt_var of Ident.t
+  | Lt_mu of Ident.t * lambda_type*)
+
+module AssumSet = Set.Make(struct type t = Ident.t * lambda_type let compare = compare end)
+type assumptions = AssumSet.t * AssumSet.t
+
+type env = {
+  vars : lambda_type_env;
+  types : lambda_type_env;
+  assum : assumptions;
+}
+
+let find_var id env =
+  try Ident.find_same id env
+  with Not_found -> error (Unbound_var id)
+
+let assuming_l id t assum = AssumSet.mem (id,t) (fst assum)
+let assuming_r t id assum = AssumSet.mem (id,t) (snd assum)
+
+let assum_empty = AssumSet.empty, AssumSet.empty
+let assum_l id t assum = (AssumSet.add (id,t) (fst assum), snd assum)
+let assum_r t id assum = (fst assum, AssumSet.add (id,t) (snd assum))
+
+let rec assert_subtype assum tenv t1 t2 = match t1,t2 with
+  | _, Lt_top -> ()
+  | Lt_bot, _ -> ()
+
+  | Lt_var id, t when assuming_l id t assum -> ()
+  | t, Lt_var id when assuming_r t id assum -> ()
+  | Lt_var id, t2 ->
+    begin match 
+      try Some (Ident.find_same id tenv)
+      with Not_found -> None
+    with
+      | None -> error (Unbound_tvar id)
+      | Some t1 -> assert_subtype (assum_l id t2 assum) tenv t1 t2
+    end
+  | t1, Lt_var id ->
+    begin match 
+      try Some (Ident.find_same id tenv)
+      with Not_found -> None
+    with
+      | None -> error (Unbound_tvar id)
+      | Some t2 -> assert_subtype (assum_r t1 id assum) tenv t1 t2
+    end
+
+  | t1, Lt_mu (id,t2) -> 
+    let tenv = Ident.add id t2 tenv in
+    assert_subtype assum tenv t1 t2
+  | Lt_mu (id,t1), t2 -> 
+    let tenv = Ident.add id t1 tenv in
+    assert_subtype assum tenv t1 t2
+
+  | Lt_arrow (a1,a2), Lt_arrow (b1,b2) ->
+      assert_subtype assum tenv b1 a1;
+      assert_subtype assum tenv a2 b2
+  | Lt_value v1, Lt_value v2 ->
+      assert_subvalue assum tenv t1 v1 t2 v2
+  | Lt_top, _ | _, Lt_bot | (Lt_value _ | Lt_arrow _), (Lt_value _ | Lt_arrow _) ->
+      error (Not_subtype (t1,t2))
+
+and assert_subvalue assum tenv t1 v1 t2 v2 =
+  let subconst c1 c2 = match c1,c2 with
+    | _, `Any -> true
+    | `Some l1, `Some l2 ->
+        List.for_all (fun tag -> List.exists ((=) tag) l2) l1
+    | _ -> false
+  in
+  let subblock b1 b2 =
+    List.iter (fun (tag,values) ->
+      let tag',values' = List.find (fun (tag',_) -> tag = tag') b2 in
+      List.iter2 (assert_subtype assum tenv) values values'
+    ) b1
+  in
+  try
+    if not (subconst v1.const v2.const) then raise Not_found;
+    subblock v1.blocks v2.blocks
+  with Not_found | Invalid_argument "List.iter2" ->
+    error (Not_subtype (t1,t2))
+
+let lt_app tenv tfn targ = match tfn with
+  | Lt_arrow (arg,result) -> assert_subtype assum_empty tenv targ arg; result
+  | _ -> error (Cant_apply (tfn,targ))
+
+let rec lt_check ~tenv ~env = function
+  | Lvar id ->
+      (try Ident.find_same id env
+       with Not_found -> error (Unbound_var id))
+  | Lconst const -> Lt_bot
+  | Lapply (fn,args,loc) ->
+      let targs = List.map (lt_check ~tenv ~env) args in
+      let tfn = lt_check ~tenv ~env fn in
+      List.fold_left (lt_app tenv) tfn targs
+
+  | Lfunction (kind(*TODO*),args,body) -> 
+      let env = List.fold_left
+        (fun env (id,ty) -> Ident.add id ty env)
+        env
+        args
+      in
+      let tresult = lt_check ~tenv ~env body in
+      List.fold_right
+        (fun (id,targ) tres -> Lt_arrow (targ,tres))
+        args
+        tresult
+
+  | Llet (kind(*TODO*),id,expr,body) ->
+      let texpr = lt_check ~tenv ~env expr in
+      let env = Ident.add id texpr env in
+      lt_check ~tenv ~env body
+
+  | Lprim (prim,args) -> failwith "lol"
+
+  | _ -> failwith "TODO"
+
+  (*
+  | Lletrec (bindings,body) -> 
+  | Lswitch (expr,switch) -> 
+  | Lstaticraise _ -> failwith "TODO"
+  | Lstaticcatch _ -> failwith "TODO"
+  | Ltrywith (body,id,handler) -> 
+  | Lifthenelse (cond,bt,bf) ->
+  | Lsequence (l1,l2) -> 
+  | Lwhile (pred,body) -> 
+  | Lfor (id,l1,l2,d,body) -> 
+  | Lassign (id,lam) ->
+  | Lsend (k,l1,l2,args,loc) -> failwith "TODO"
+  | Levent (lam,lev) -> failwith "TODO"
+  | Lifused (id,lam) -> failwith "TODO"
+  *)

@@ -61,5 +61,24 @@ Thu Mar  7 10:05:17 CET 2013
   monomorphisation par exemple.
 
 
-Tue Mar 12 13:54:30 CET 2013
+Wed Mar 13 22:08:02 CET 2013
 
+* Ajout de lambda_type dans bytecomp/lambda.ml :
+
+  - algèbre de type :
+    - le type de base s'inspire de la représentation mémoire d'OCaml,
+      disjonction entre:
+      - sous-ensemble fini d'entier (types sommes ou variants) ou tous les entiers
+      - liste d'un produit de blocks avec tag
+    - point fixe
+    - top/bottom, ??
+
+  - relation de sous-typage structurel
+
+* Ajout des types au pretty-printer bytecomp/printlambda.ml
+
+* À voir :
+  
+  - ajouter abstraction / instantiation pour les types
+  - top/bottom, nécessaire ?
+  - traduire les types de bases

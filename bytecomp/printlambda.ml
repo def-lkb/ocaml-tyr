@@ -185,8 +185,36 @@ let primitive ppf = function
   | Pbigarrayset(unsafe, n, kind, layout) ->
       print_bigarray "set" unsafe kind ppf layout
 
+let print_list delim printer ppf items =
+  let first = ref true in
+  List.iter
+  begin fun item ->
+    if !first then first := false else fprintf ppf "%s@" delim;
+    printer ppf item
+  end items
+
+let rec lam_ty ppf = function
+  | Lt_top -> fprintf ppf "T"
+  | Lt_bot -> fprintf ppf "0"
+  | Lt_arrow (t1,t2) -> fprintf ppf "(%a -> %a)" lam_ty t1 lam_ty t2
+  | Lt_var id -> Ident.print ppf id
+  | Lt_mu (id, t) -> fprintf ppf "(mu %a. %a)" Ident.print id lam_ty t
+  | Lt_value { Lambda. const = `Some [] ; blocks = [] }  -> 
+      fprintf ppf "{}"
+  | Lt_value { Lambda. const ; blocks }  -> 
+      let print_const = function
+        | `Any -> [(fun ppf -> pp_print_string ppf "int")]
+        | `Some l -> List.map (fun i ppf -> pp_print_int ppf i) l
+      in
+      let print_block (i,tys) ppf =
+        fprintf ppf "%d[%a]" i (print_list " * " lam_ty) tys
+      in
+      fprintf ppf "{ %a }"
+        (print_list " | " (fun ppf f -> f ppf))
+        (print_const const @ List.map print_block blocks)
+ 
 let rec lam ppf = function
-  | Lvar (id,_) ->
+  | Lvar id ->
       Ident.print ppf id
   | Lconst cst ->
       struct_const ppf cst
@@ -198,14 +226,14 @@ let rec lam ppf = function
       let pr_params ppf params =
         match kind with
         | Curried ->
-            List.iter (fun param -> fprintf ppf "@ %a" Ident.print param) params
+            List.iter (fun (id,ty) -> fprintf ppf "@ (%a : %a)" Ident.print id lam_ty ty) params
         | Tupled ->
             fprintf ppf " (";
             let first = ref true in
             List.iter
-              (fun param ->
+              (fun (id,ty) ->
                 if !first then first := false else fprintf ppf ",@ ";
-                Ident.print ppf param)
+                fprintf ppf "(%a : %a)" Ident.print id lam_ty ty)
               params;
             fprintf ppf ")" in
       fprintf ppf "@[<2>(function%a@ %a)@]" pr_params params lam body

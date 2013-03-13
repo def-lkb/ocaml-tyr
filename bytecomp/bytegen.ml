@@ -134,9 +134,9 @@ type rhs_kind =
 
 let rec check_recordwith_updates id e =
   match e with
-  | Lsequence (Lprim ((Psetfield _ | Psetfloatfield _), [Lvar (id2,Iota); _]), cont)
+  | Lsequence (Lprim ((Psetfield _ | Psetfloatfield _), [Lvar id2; _]), cont)
       -> id2 = id && check_recordwith_updates id cont
-  | Lvar (id2,Iota) -> id2 = id
+  | Lvar id2 -> id2 = id
   | _ -> false
 ;;
 
@@ -392,7 +392,7 @@ let is_immed n = immed_min <= n && n <= immed_max
 let rec comp_expr env exp sz cont =
   if sz > !max_stack_used then max_stack_used := sz;
   match exp with
-    Lvar (id,Iota) ->
+    Lvar id ->
       begin try
         let pos = Ident.find_same id env.ce_stack in
         Kacc(sz - pos) :: cont
@@ -454,10 +454,10 @@ let rec comp_expr env exp sz cont =
       let lbl = new_label() in
       let fv = IdentSet.elements(free_variables exp) in
       let to_compile =
-        { params = params; body = body; label = lbl;
+        { params = List.map fst params; body = body; label = lbl;
           free_vars = fv; num_defs = 1; rec_vars = []; rec_pos = 0 } in
       Stack.push to_compile functions_to_compile;
-      comp_args env (List.map (fun n -> Lvar (n,Iota)) fv) sz
+      comp_args env (List.map (fun n -> Lvar n) fv) sz
         (Kclosure(lbl, List.length fv) :: cont)
   | Llet(str, id, arg, body) ->
       comp_expr env arg sz
@@ -476,13 +476,13 @@ let rec comp_expr env exp sz cont =
           | (id, Lfunction(kind, params, body)) :: rem ->
               let lbl = new_label() in
               let to_compile =
-                { params = params; body = body; label = lbl; free_vars = fv;
+                { params = List.map fst params; body = body; label = lbl; free_vars = fv;
                   num_defs = ndecl; rec_vars = rec_idents; rec_pos = pos} in
               Stack.push to_compile functions_to_compile;
               lbl :: comp_fun (pos + 1) rem
           | _ -> assert false in
         let lbls = comp_fun 0 decl in
-        comp_args env (List.map (fun n -> Lvar (n,Iota)) fv) sz
+        comp_args env (List.map (fun n -> Lvar n) fv) sz
           (Kclosurerec(lbls, List.length fv) ::
             (comp_expr (add_vars rec_idents (sz+1) env) body (sz + ndecl)
                        (add_pop ndecl cont)))

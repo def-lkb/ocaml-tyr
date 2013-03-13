@@ -134,13 +134,25 @@ type meth_kind = Self | Public | Cached
 
 type shared_code = (int * int) list     (* stack size -> code label *)
 
-type lambda_type = Iota
+type lambda_type = 
+  | Lt_top | Lt_bot
+  | Lt_arrow of lambda_type * lambda_type
+  | Lt_value of lambda_val_type
+  | Lt_var of Ident.t
+  | Lt_mu of Ident.t * lambda_type
+
+and lambda_val_type = {
+  blocks : (int * lambda_type list) list;
+  const : [`Any | `Some of int list ];
+}
+
+type lambda_type_env = lambda_type Ident.tbl
 
 type lambda =
-    Lvar of Ident.t * lambda_type
+    Lvar of Ident.t
   | Lconst of structured_constant
   | Lapply of lambda * lambda list * Location.t
-  | Lfunction of function_kind * Ident.t list * lambda
+  | Lfunction of function_kind * (Ident.t * lambda_type) list * lambda
   | Llet of let_kind * Ident.t * lambda * lambda
   | Lletrec of (Ident.t * lambda) list * lambda
   | Lprim of primitive * lambda list
@@ -207,3 +219,17 @@ val staticfail : lambda (* Anticipated static failure *)
 (* Check anticipated failure, substitute its final value *)
 val is_guarded: lambda -> bool
 val patch_guarded : lambda -> lambda -> lambda
+
+(************************)
+(* Type checking lambda *)
+(************************)
+
+type error =
+  | Not_subtype of lambda_type * lambda_type
+  | Cant_apply of lambda_type * lambda_type
+  | Unbound_var of Ident.t
+  | Unbound_tvar of Ident.t
+
+exception Error of error
+
+val lt_check : tenv:lambda_type_env -> env:lambda_type_env -> lambda -> lambda_type
