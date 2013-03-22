@@ -82,3 +82,15 @@ Wed Mar 13 22:08:02 CET 2013
   - ajouter abstraction / instantiation pour les types
   - top/bottom, nécessaire ?
   - traduire les types de bases
+
+
+Fri Mar 22 08:40:09 CET 2013
+  Notes du 14 mars:
+  Fait: 
+  - un début d'algèbre de type.
+  
+  Après discussion avec Didier Rémy, il semblerait qu'il n'y ait pas à première vue de problème à cibler (une variante de) F_sub comme nous sommes en mode "vérification des types". Cela nécessiterait 
+  
+  À faire:
+  - Etudier F_sub et essayer de déduire la variante sans quantification bornée qui suffirait pour 
+  typer OCaml.
