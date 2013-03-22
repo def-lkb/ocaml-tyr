@@ -1,0 +1,86 @@
+Lambda language
+---------------
+
+Lvar of Ident.t
+  Bound variable
+
+Lprim of primitive * lambda list
+  Call to primitive, always eta-expanded
+
+Lconst of structured_constant
+  Immediate values
+  Const_base of constant
+  Const_pointer of int
+    Same as integer, represent constant constructors
+      (~ constant block with no values, for sum types and variants)
+  Const_block of int * structured_constant list
+  Const_float_array of string list
+    Floats are kept as human-readable strings
+  Const_immstring of string
+
+Lapply of lambda * lambda list * Location.t
+  Application of one or more arguments (non empty list)
+
+Lfunction of function_kind * (Ident.t * lambda_type) list * lambda
+  Abstraction over list of arguments.
+  Function_kind is usually Curried, however some primitives use Tupled
+  and for efficiency, functions matching over tuples may get compiled to
+  Tupled form (as in "let f = function (a,b) -> _").
+  translcore.ml:918
+
+Llet of let_kind * Ident.t * lambda * lambda
+  Definitions of let_kind, from lambda.mli:122,
+    Strict: e may have side-effets; always evaluate e first
+      (If e is a simple expression, e.g. a variable or constant,
+       we may still substitute e'[x/e].)
+    Alias: e is pure, we can substitute e'[x/e] if x has 0 or 1 occurrences
+      in e'
+    StrictOpt: e does not have side-effects, but depend on the store;
+      we can discard e if x does not appear in e'
+    Variable: the variable x is assigned later in e' *)
+  TYR: add type anotations to bound identifiers.
+
+Lletrec of (Ident.t * lambda) list * lambda
+  Used to translate "let rec " AND class definitions.
+  TYR: add type anotations to bound identifiers.
+  
+Lswitch of lambda * lambda_switch
+  Dispatch on value tag, either constant or block tag,
+  with optional handling of failure.
+  TYR: when matching a variable, we need to refine its
+       type in the branches.
+
+Lifthenelse of lambda * lambda * lambda
+  Test a value. Only false value is 0 ocaml-int = 1 C-int.
+  TYR: when testing a variable, we need to refine its type.
+  
+Lsequence of lambda * lambda
+  Straightforward: evaluate left branch then right branch.
+
+Lwhile of lambda * lambda
+  Straightforward.
+
+Lfor of Ident.t * lambda * lambda * direction_flag * lambda
+  Lfor(id,lo,hi,dir,body):
+    Evaluate lo and hi to integers, then evaluate body with
+    "id" bound to each integer value from lo to hi (inclusive)
+    if lo <= hi and dir = Upto
+    or lo >= hi and dir = Downto
+
+Lstaticraise of int * lambda list
+Lstaticcatch of lambda * (int * Ident.t list) * lambda
+Ltrywith of lambda * Ident.t * lambda
+
+Lassign of Ident.t * lambda
+
+Lsend of meth_kind * lambda * lambda * lambda list * Location.t
+Levent of lambda * lambda_event
+Lifused of Ident.t * lambda
+
+
+
+Translation
+-----------
+
+FIXME: Caching
+FIXME: Recursive let-binding check
