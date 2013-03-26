@@ -35,7 +35,7 @@ CAMLP4OUT=$(CAMLP4:=out)
 CAMLP4OPT=$(CAMLP4:=opt)
 
 INCLUDES=-I utils -I parsing -I typing -I bytecomp -I asmcomp -I driver \
-	 -I toplevel
+	 -I toplevel -I lambda
 
 UTILS=utils/misc.cmo utils/tbl.cmo utils/config.cmo \
   utils/clflags.cmo utils/terminfo.cmo utils/ccomp.cmo utils/warnings.cmo \
@@ -58,7 +58,9 @@ TYPING=typing/ident.cmo typing/path.cmo \
   typing/typedecl.cmo typing/typeclass.cmo \
   typing/typemod.cmo
 
-COMP=bytecomp/lambda.cmo bytecomp/printlambda.cmo \
+COMP=lambda/lambda.cmo lambda/printlambda.cmo \
+  lambda/lambdaparser_def.cmo lambda/lambdaparser.cmo \
+  lambda/lambdalexer.cmo lambda/lambdaparse.cmo \
   bytecomp/typeopt.cmo bytecomp/switch.cmo bytecomp/matching.cmo \
   bytecomp/translobj.cmo bytecomp/translcore.cmo \
   bytecomp/translclass.cmo bytecomp/translmod.cmo \
@@ -444,6 +446,28 @@ partialclean::
 	rm -f parsing/lexer.ml
 
 beforedepend:: parsing/lexer.ml
+
+# The lambda parser
+
+lambda/lambdaparser.cmo: lambda/lambdaparser.cmi
+
+lambda/lambdaparser.mli lambda/lambdaparser.ml: lambda/lambdaparser.mly lambda/lambda.cmi
+	$(CAMLYACC) $(YACCFLAGS) lambda/lambdaparser.mly
+
+partialclean::
+	rm -f lambda/lambdaparser.mli lambda/lambdaparser.ml lambda/lambdaparser.output
+
+beforedepend:: lambda/lambdaparser.mli lambda/lambdaparser.ml
+
+# The lambda lexer
+
+lambda/lambdalexer.ml: lambda/lambdalexer.mll
+	$(CAMLLEX) lambda/lambdalexer.mll
+
+partialclean::
+	rm -f lambda/lambdalexer.ml
+
+beforedepend:: lambda/lambdalexer.ml
 
 # Shared parts of the system compiled with the native-code compiler
 
