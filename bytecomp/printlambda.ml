@@ -18,19 +18,60 @@ open Primitive
 open Types
 open Lambda
 
+let boxed_integer_name = function
+  | Pnativeint -> "nativeint"
+  | Pint32     -> "int32"
+  | Pint64     -> "int64"
+
+let boxed_integer_mark = function
+  | Pnativeint -> "Nativeint"
+  | Pint32     -> "Int32"
+  | Pint64     -> "Int64"
+
+let bigarray_kind = function
+  | Pbigarray_unknown    -> "generic"
+  | Pbigarray_float32    -> "float32"
+  | Pbigarray_float64    -> "float64"
+  | Pbigarray_sint8      -> "sint8"
+  | Pbigarray_uint8      -> "uint8"
+  | Pbigarray_sint16     -> "sint16"
+  | Pbigarray_uint16     -> "uint16"
+  | Pbigarray_int32      -> "int32"
+  | Pbigarray_int64      -> "int64"
+  | Pbigarray_caml_int   -> "camlint"
+  | Pbigarray_native_int -> "nativeint"
+  | Pbigarray_complex32  -> "complex32"
+  | Pbigarray_complex64  -> "complex64"
+
+let bigarray_layout = function
+  | Pbigarray_unknown_layout -> "unknown"
+  | Pbigarray_c_layout       -> "C"
+  | Pbigarray_fortran_layout -> "Fortran"
+
+let record_rep = function
+  | Record_regular -> "regular"
+  | Record_float   -> "float"
+
+let array_kind = function
+  | Pgenarray   -> "gen"
+  | Pintarray   -> "int"
+  | Paddrarray  -> "addr"
+  | Pfloatarray -> "float"
+
+let base_const ppf = function
+  | Const_int n       -> fprintf ppf "%i" n
+  | Const_char c      -> fprintf ppf "%C" c
+  | Const_string s    -> fprintf ppf "%S" s
+  | Const_float f     -> fprintf ppf "%s" f
+  | Const_int32 n     -> fprintf ppf "%lil" n
+  | Const_int64 n     -> fprintf ppf "%LiL" n
+  | Const_nativeint n -> fprintf ppf "%nin" n
 
 let rec struct_const ppf = function
-  | Const_base(Const_int n) -> fprintf ppf "%i" n
-  | Const_base(Const_char c) -> fprintf ppf "%C" c
-  | Const_base(Const_string s) -> fprintf ppf "%S" s
-  | Const_immstring s -> fprintf ppf "#%S" s
-  | Const_base(Const_float f) -> fprintf ppf "%s" f
-  | Const_base(Const_int32 n) -> fprintf ppf "%lil" n
-  | Const_base(Const_int64 n) -> fprintf ppf "%LiL" n
-  | Const_base(Const_nativeint n) -> fprintf ppf "%nin" n
-  | Const_pointer n -> fprintf ppf "%ia" n
-  | Const_block(tag, []) ->
-      fprintf ppf "[%i]" tag
+  | Const_base c         -> base_const ppf c
+  | Const_immstring s    -> fprintf ppf "#%S" s
+  | Const_pointer n      -> fprintf ppf "%ia" n
+  | Const_block(tag, []) -> fprintf ppf "[%i]" tag
   | Const_block(tag, sc1::scl) ->
       let sconsts ppf scl =
         List.iter (fun sc -> fprintf ppf "@ %a" struct_const sc) scl in
@@ -42,71 +83,45 @@ let rec struct_const ppf = function
         List.iter (fun f -> fprintf ppf "@ %s" f) fl in
       fprintf ppf "@[<1>[|@[%s%a@]|]@]" f1 floats fl
 
-let boxed_integer_name = function
-  | Pnativeint -> "nativeint"
-  | Pint32 -> "int32"
-  | Pint64 -> "int64"
-
-let print_boxed_integer name ppf bi =
-  fprintf ppf "%s_%s" (boxed_integer_name bi) name
-
 let print_boxed_integer_conversion ppf bi1 bi2 =
   fprintf ppf "%s_of_%s" (boxed_integer_name bi2) (boxed_integer_name bi1)
 
-let boxed_integer_mark name = function
-  | Pnativeint -> Printf.sprintf "Nativeint.%s" name
-  | Pint32 -> Printf.sprintf "Int32.%s" name
-  | Pint64 -> Printf.sprintf "Int64.%s" name
-
 let print_boxed_integer name ppf bi =
-  fprintf ppf "%s" (boxed_integer_mark name bi);;
+  fprintf ppf "%s.%s" (boxed_integer_mark bi) name;;
 
-let print_bigarray name unsafe kind ppf layout =
-  fprintf ppf "Bigarray.%s[%s,%s]"
+let print_bigarray ppf name unsafe n kind layout =
+  fprintf ppf "Bigarray.%s[%d,%s,%s]"
     (if unsafe then "unsafe_"^ name else name)
-    (match kind with
-     | Pbigarray_unknown -> "generic"
-     | Pbigarray_float32 -> "float32"
-     | Pbigarray_float64 -> "float64"
-     | Pbigarray_sint8 -> "sint8"
-     | Pbigarray_uint8 -> "uint8"
-     | Pbigarray_sint16 -> "sint16"
-     | Pbigarray_uint16 -> "uint16"
-     | Pbigarray_int32 -> "int32"
-     | Pbigarray_int64 -> "int64"
-     | Pbigarray_caml_int -> "camlint"
-     | Pbigarray_native_int -> "nativeint"
-     | Pbigarray_complex32 -> "complex32"
-     | Pbigarray_complex64 -> "complex64")
-    (match layout with
-    |  Pbigarray_unknown_layout -> "unknown"
-     | Pbigarray_c_layout -> "C"
-     | Pbigarray_fortran_layout -> "Fortran")
-
-let record_rep ppf r =
-  match r with
-  | Record_regular -> fprintf ppf "regular"
-  | Record_float -> fprintf ppf "float"
-;;
+    n (bigarray_kind kind) (bigarray_layout layout)
 
 let primitive ppf = function
   | Pidentity -> fprintf ppf "id"
   | Pignore -> fprintf ppf "ignore"
   | Prevapply _ -> fprintf ppf "revapply"
   | Pdirapply _ -> fprintf ppf "dirapply"
-  | Pgetglobal id -> fprintf ppf "global %a" Ident.print id
-  | Psetglobal id -> fprintf ppf "setglobal %a" Ident.print id
-  | Pmakeblock(tag, Immutable) -> fprintf ppf "makeblock %i" tag
-  | Pmakeblock(tag, Mutable) -> fprintf ppf "makemutable %i" tag
-  | Pfield n -> fprintf ppf "field %i" n
+  | Pgetglobal id -> fprintf ppf "global[%a]" Ident.print id
+  | Psetglobal id -> fprintf ppf "setglobal[%a]" Ident.print id
+  | Pmakeblock(tag, Immutable) -> fprintf ppf "makeblock[%i]" tag
+  | Pmakeblock(tag, Mutable) -> fprintf ppf "makemutable[%i]" tag
+  | Pfield n -> fprintf ppf "field[%i]" n
   | Psetfield(n, ptr) ->
-      let instr = if ptr then "setfield_ptr " else "setfield_imm " in
-      fprintf ppf "%s%i" instr n
-  | Pfloatfield n -> fprintf ppf "floatfield %i" n
-  | Psetfloatfield n -> fprintf ppf "setfloatfield %i" n
-  | Pduprecord (rep, size) -> fprintf ppf "duprecord %a %i" record_rep rep size
+      let instr = if ptr then "setfield_ptr" else "setfield_imm" in
+      fprintf ppf "%s[%i]" instr n
+  | Pfloatfield n -> fprintf ppf "floatfield[%i]" n
+  | Psetfloatfield n -> fprintf ppf "setfloatfield[%i]" n
+  | Pduprecord (rep, size) -> fprintf ppf "duprecord[%s,%i]" (record_rep rep) size
   | Plazyforce -> fprintf ppf "force"
-  | Pccall p -> fprintf ppf "%s" p.prim_name
+  | Pccall p -> 
+      let flags = [
+        (true, p.prim_name);
+        (p.prim_native_name <> "", p.prim_native_name);
+        (true, string_of_int p.prim_arity);
+        (not p.prim_alloc, "noalloc");
+        (p.prim_native_float, "float");
+      ] in
+      let flags = List.filter fst flags in
+      let flags = List.map snd flags in
+      fprintf ppf "ccall[%s]" (String.concat "," flags)
   | Praise -> fprintf ppf "raise"
   | Psequand -> fprintf ppf "&&"
   | Psequor -> fprintf ppf "||"
@@ -129,8 +144,8 @@ let primitive ppf = function
   | Pintcomp(Cle) -> fprintf ppf "<="
   | Pintcomp(Cgt) -> fprintf ppf ">"
   | Pintcomp(Cge) -> fprintf ppf ">="
-  | Poffsetint n -> fprintf ppf "%i+" n
-  | Poffsetref n -> fprintf ppf "+:=%i"n
+  | Poffsetint n -> fprintf ppf "+[%i]" n
+  | Poffsetref n -> fprintf ppf "+:=[%i]" n
   | Pintoffloat -> fprintf ppf "int_of_float"
   | Pfloatofint -> fprintf ppf "float_of_int"
   | Pnegfloat -> fprintf ppf "~."
@@ -150,12 +165,12 @@ let primitive ppf = function
   | Pstringsetu -> fprintf ppf "string.unsafe_set"
   | Pstringrefs -> fprintf ppf "string.get"
   | Pstringsets -> fprintf ppf "string.set"
-  | Parraylength _ -> fprintf ppf "array.length"
-  | Pmakearray _ -> fprintf ppf "makearray "
-  | Parrayrefu _ -> fprintf ppf "array.unsafe_get"
-  | Parraysetu _ -> fprintf ppf "array.unsafe_set"
-  | Parrayrefs _ -> fprintf ppf "array.get"
-  | Parraysets _ -> fprintf ppf "array.set"
+  | Parraylength k -> fprintf ppf "array.length[%s]" (array_kind k)
+  | Pmakearray k -> fprintf ppf "makearray[%s]" (array_kind k)
+  | Parrayrefu k -> fprintf ppf "array.unsafe_get[%s]" (array_kind k)
+  | Parraysetu k -> fprintf ppf "array.unsafe_set[%s]" (array_kind k)
+  | Parrayrefs k -> fprintf ppf "array.get[%s]" (array_kind k)
+  | Parraysets k -> fprintf ppf "array.set[%s]" (array_kind k)
   | Pisint -> fprintf ppf "isint"
   | Pisout -> fprintf ppf "isout"
   | Pbittest -> fprintf ppf "testbit"
@@ -181,9 +196,9 @@ let primitive ppf = function
   | Pbintcomp(bi, Cle) -> print_boxed_integer "<=" ppf bi
   | Pbintcomp(bi, Cge) -> print_boxed_integer ">=" ppf bi
   | Pbigarrayref(unsafe, n, kind, layout) ->
-      print_bigarray "get" unsafe kind ppf layout
+      print_bigarray ppf "get" unsafe n kind layout
   | Pbigarrayset(unsafe, n, kind, layout) ->
-      print_bigarray "set" unsafe kind ppf layout
+      print_bigarray ppf "set" unsafe n kind layout
 
 let print_list delim printer ppf items =
   let first = ref true in
@@ -207,7 +222,7 @@ let rec lam_ty ppf = function
         | `Some l -> List.map (fun i ppf -> pp_print_int ppf i) l
       in
       let print_block (i,tys) ppf =
-        fprintf ppf "%d[%a]" i (print_list " * " lam_ty) tys
+        fprintf ppf "[%d: %a]" i (print_list " * " lam_ty) tys
       in
       fprintf ppf "{ %a }"
         (print_list " | " (fun ppf f -> f ppf))
@@ -237,13 +252,20 @@ let rec lam ppf = function
               params;
             fprintf ppf ")" in
       fprintf ppf "@[<2>(function%a@ %a)@]" pr_params params lam body
-  | Llet(str, id, arg, body) ->
+
+  | Llet(k, id, arg, body) ->
       let rec letbody = function
-        | Llet(str, id, arg, body) ->
+        | Llet(k', id, arg, body) when k = k' ->
             fprintf ppf "@ @[<2>%a@ %a@]" Ident.print id lam arg;
             letbody body
         | expr -> expr in
-      fprintf ppf "@[<2>(let@ @[<hv 1>(@[<2>%a@ %a@]" Ident.print id lam arg;
+      let kind = match k with
+        | Strict    -> ""
+        | Alias     -> "[alias]"
+        | StrictOpt -> "[opt]"
+        | Variable  -> "[var]"
+      in
+      fprintf ppf "@[<2>(let%s@ @[<hv 1>(@[<2>%a@ %a@]" kind Ident.print id lam arg;
       let expr = letbody body in
       fprintf ppf ")@]@ %a)@]" lam expr
   | Lletrec(id_arg_list, body) ->
@@ -266,12 +288,12 @@ let rec lam ppf = function
         List.iter
          (fun (n, l) ->
            if !spc then fprintf ppf "@ " else spc := true;
-           fprintf ppf "@[<hv 1>case int %i:@ %a@]" n lam l)
+           fprintf ppf "@[<hv 1>case[int,%i]:@ %a@]" n lam l)
          sw.sw_consts;
         List.iter
           (fun (n, l) ->
             if !spc then fprintf ppf "@ " else spc := true;
-            fprintf ppf "@[<hv 1>case tag %i:@ %a@]" n lam l)
+            fprintf ppf "@[<hv 1>case[tag,%i]:@ %a@]" n lam l)
           sw.sw_blocks ;
         begin match sw.sw_failaction with
         | None  -> ()
@@ -281,23 +303,18 @@ let rec lam ppf = function
         end in
 
       fprintf ppf
-       "@[<1>(%s %a@ @[<v 0>%a@])@]"
+       "@[<1>(%s[%d,%d] %a@ @[<v 0>%a@])@]"
        (match sw.sw_failaction with None -> "switch*" | _ -> "switch")
+       sw.sw_numconsts sw.sw_numblocks
        lam larg switch sw
   | Lstaticraise (i, ls)  ->
       let lams ppf largs =
         List.iter (fun l -> fprintf ppf "@ %a" lam l) largs in
-      fprintf ppf "@[<2>(exit@ %d%a)@]" i lams ls;
+      fprintf ppf "@[<2>(exit[%d]@%a)@]" i lams ls;
   | Lstaticcatch(lbody, (i, vars), lhandler) ->
-      fprintf ppf "@[<2>(catch@ %a@;<1 -1>with (%d%a)@ %a)@]"
+      fprintf ppf "@[<2>(catch@ %a@;<1 -1>with[%d]%a@ %a)@]"
         lam lbody i
-        (fun ppf vars -> match vars with
-          | [] -> ()
-          | _ ->
-              List.iter
-                (fun x -> fprintf ppf " %a" Ident.print x)
-                vars)
-        vars
+        (fun ppf -> List.iter (fprintf ppf " %a" Ident.print)) vars
         lam lhandler
   | Ltrywith(lbody, param, lhandler) ->
       fprintf ppf "@[<2>(try@ %a@;<1 -1>with %a@ %a)@]"
