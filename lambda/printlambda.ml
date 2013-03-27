@@ -200,34 +200,35 @@ let primitive ppf = function
   | Pbigarrayset(unsafe, n, kind, layout) ->
       print_bigarray ppf "set" unsafe n kind layout
 
-let print_list delim printer ppf items =
-  let first = ref true in
-  List.iter
-  begin fun item ->
-    if !first then first := false else fprintf ppf "%s@" delim;
-    printer ppf item
-  end items
+let print_list ?first ?(delim="") ?last printer ppf = function
+  | [] -> ()
+  | hd :: tl ->
+      (match first with Some s -> pp_print_string ppf s | None -> ());
+      printer ppf hd;
+      List.iter (fprintf ppf "%s@%a" delim printer) tl;
+      (match last with Some s -> pp_print_string ppf s | None -> ())
 
 let rec lam_ty ppf = function
-  | Lt_top -> fprintf ppf "T"
-  | Lt_bot -> fprintf ppf "0"
+  | Lt_top -> fprintf ppf "top"
+  | Lt_bot -> fprintf ppf "bot"
   | Lt_arrow (t1,t2) -> fprintf ppf "(%a -> %a)" lam_ty t1 lam_ty t2
   | Lt_var id -> Ident.print ppf id
-  | Lt_mu (id, t) -> fprintf ppf "(mu %a. %a)" Ident.print id lam_ty t
+  | Lt_mu (id, t) -> fprintf ppf "(mu %a %a)" Ident.print id lam_ty t
   | Lt_value { Lambda. const = `Some [] ; blocks = [] }  -> 
-      fprintf ppf "{}"
+      fprintf ppf "(val)"
   | Lt_value { Lambda. const ; blocks }  -> 
-      let print_const = function
-        | `Any -> [(fun ppf -> pp_print_string ppf "int")]
-        | `Some l -> List.map (fun i ppf -> pp_print_int ppf i) l
+      let print_const ppf = function
+        | `Any -> pp_print_string ppf " int"
+        | `Some l -> fprintf ppf " int[%s]"
+            (String.concat "," (List.map string_of_int l))
       in
-      let print_block (i,tys) ppf =
-        fprintf ppf "[%d: %a]" i (print_list " * " lam_ty) tys
+      let print_block ppf (i,tys) =
+        fprintf ppf "(tag[%d]%a)" i (print_list ~first:" " ~delim:" " lam_ty) tys
       in
-      fprintf ppf "{ %a }"
-        (print_list " | " (fun ppf f -> f ppf))
-        (print_const const @ List.map print_block blocks)
- 
+      fprintf ppf "(val%a%a)"
+        print_const const 
+        (print_list print_block) blocks
+;; 
 let rec lam ppf = function
   | Lvar id ->
       Ident.print ppf id
@@ -310,7 +311,7 @@ let rec lam ppf = function
   | Lstaticraise (i, ls)  ->
       let lams ppf largs =
         List.iter (fun l -> fprintf ppf "@ %a" lam l) largs in
-      fprintf ppf "@[<2>(exit[%d]@%a)@]" i lams ls;
+      fprintf ppf "@[<2>(exit[%d]%a)@]" i lams ls;
   | Lstaticcatch(lbody, (i, vars), lhandler) ->
       fprintf ppf "@[<2>(catch@ %a@;<1 -1>with[%d]%a@ %a)@]"
         lam lbody i

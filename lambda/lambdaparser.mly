@@ -35,6 +35,7 @@ lambda:
   | IDENT { Def.Ident $1 }
   | INT   { Def.Const (Const_base (Const_int $1)) }
   | FLOAT { Def.Const (Const_base (Const_float $1)) }
+  | COLON { Def.Colon }
   | SYMBOL { Def.Symbol $1 }
   | PSYMBOL symbol_params RBRACKET { Def.PSymbol ($1, List.rev $2) }
   | PSYMBOL symbol_params RBRACKET COLON { Def.PSymbol ($1, List.rev $2) }

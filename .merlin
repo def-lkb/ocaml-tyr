@@ -16,6 +16,7 @@ S ./debugger
 S ./utils
 S ./boot
 S ./bytecomp
+S ./lambda
 S ./toplevel
 S ./typing
 S ./asmcomp
@@ -39,6 +40,7 @@ B ./debugger
 B ./utils
 B ./boot
 B ./bytecomp
+B ./lambda
 B ./toplevel
 B ./typing
 B ./asmcomp

@@ -14,6 +14,7 @@ type t =
   | Symbol of string
   | PSymbol of string * param list
   | Const of structured_constant
+  | Colon
 
 let rec print ppf = 
   let open Format in 
@@ -26,6 +27,7 @@ let rec print ppf =
   | Symbol s -> fprintf ppf "%s" s
   | PSymbol (s,_) -> fprintf ppf "%s[]" s
   | Const _ -> fprintf ppf "<const>" 
+  | Colon -> fprintf ppf ":"
 
 type prim =
   | Prim of primitive

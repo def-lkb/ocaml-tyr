@@ -449,6 +449,8 @@ beforedepend:: parsing/lexer.ml
 
 # The lambda parser
 
+lambda/lambdaparse.cmo: lambda/printlambda.cmi
+
 lambda/lambdaparser.cmo: lambda/lambdaparser.cmi
 
 lambda/lambdaparser.mli lambda/lambdaparser.ml: lambda/lambdaparser.mly lambda/lambda.cmi
@@ -461,7 +463,9 @@ beforedepend:: lambda/lambdaparser.mli lambda/lambdaparser.ml
 
 # The lambda lexer
 
-lambda/lambdalexer.ml: lambda/lambdalexer.mll
+lambda/lambdalexer.cmo: lambda/lambdaparser_def.cmi
+
+lambda/lambdalexer.ml: lambda/lambdalexer.mll 
 	$(CAMLLEX) lambda/lambdalexer.mll
 
 partialclean::

@@ -1,16 +1,18 @@
-open Lambdaparser_def
 open Lambda
+open Lambdaparser_def
+
+let type_of_tree _ = Lt_bot
 
 let function_split arguments = 
   let extract_param = function
-    | Ident id -> id
+    | List (_,[Ident id ; Colon ; ty]) -> (id, type_of_tree ty)
     | _ -> failwith "Invalid parameter"
   in
   match List.rev arguments with
-  | [body ; List (_,params)] ->
-      (Lambda.Tupled, List.map extract_param params, body)
-  | (body :: params) ->
-      (Lambda.Curried, List.rev_map extract_param params, body)
+  | [body ; List (_,(List (_, [Ident _ ; Colon ; _]) :: _ as params))] ->
+      (Tupled, List.map extract_param params, body)
+  | (body :: (List (_, [Ident _ ; Colon ; _]) :: _ as params)) ->
+      (Curried, List.rev_map extract_param params, body)
   | _ -> failwith "Invalid 'function' definition"
 
 let catch_handler tail =
@@ -105,29 +107,7 @@ let rec lambda_of_tree = function
   | List (_, PSymbol (prim,params) :: args) ->
       Lprim (get_prim ~params prim, List.map lambda_of_tree args)
 
-  | Symbol _ | PSymbol _ | List _ as lam ->
+  | Colon | Symbol _ | PSymbol _ | List _ as lam ->
       Lambdaparser_def.print Format.std_formatter lam;
       failwith "Invalid lambda"
-
-let main () =
-  try
-    let cin =
-      if Array.length Sys.argv > 1
-      then open_in Sys.argv.(1)
-      else stdin
-    in
-    let lexbuf = Lexing.from_channel cin in
-    while true do
-      let lexfun buf =
-        let token = Lambdalexer.token buf in
-        prerr_endline (Lambdalexer.token_to_string token);
-        token
-      in
-      let ast = Lambdaparser.lambda lexfun lexbuf in
-      let lam = lambda_of_tree ast in
-      Printlambda.lambda Format.std_formatter lam
-    done
-  with End_of_file -> exit 0
-
-let _ = Printexc.print main ()
 
