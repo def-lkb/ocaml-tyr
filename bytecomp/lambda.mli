@@ -156,7 +156,7 @@ type lambda =
   | Llet of let_kind * Ident.t * lambda * lambda
   | Lletrec of (Ident.t * lambda) list * lambda
   | Lprim of primitive * lambda list
-  | Lswitch of lambda * lambda_switch
+  | Lswitch of Ident.t * lambda_switch
   | Lstaticraise of int * lambda list
   | Lstaticcatch of lambda * (int * Ident.t list) * lambda
   | Ltrywith of lambda * Ident.t * lambda
@@ -191,6 +191,8 @@ val const_unit: structured_constant
 val lambda_unit: lambda
 val name_lambda: lambda -> (Ident.t -> lambda) -> lambda
 val name_lambda_list: lambda list -> (lambda list -> lambda) -> lambda
+
+val switch_alias: ?name:string -> lambda -> lambda_switch -> lambda
 
 val iter: (lambda -> unit) -> lambda -> unit
 module IdentSet: Set.S with type elt = Ident.t

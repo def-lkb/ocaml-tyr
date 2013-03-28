@@ -147,7 +147,7 @@ type lambda =
   | Llet of let_kind * Ident.t * lambda * lambda
   | Lletrec of (Ident.t * lambda) list * lambda
   | Lprim of primitive * lambda list
-  | Lswitch of lambda * lambda_switch
+  | Lswitch of Ident.t * lambda_switch
   | Lstaticraise of int * lambda list
   | Lstaticcatch of lambda * (int * Ident.t list) * lambda
   | Ltrywith of lambda * Ident.t * lambda
@@ -178,6 +178,14 @@ and lambda_event_kind =
   | Lev_after of Types.type_expr
   | Lev_function
 
+let switch_alias ?(name="alias") larg switch =
+  match larg with
+    | Lvar x -> Lswitch (x, switch)
+    | _ ->
+      let alias = Ident.create name in
+      Llet (Alias, alias, larg,
+        Lswitch (alias, switch))
+
 let const_unit = Const_pointer 0
 
 let lambda_unit = Lconst const_unit
@@ -199,7 +207,7 @@ let rec same l1 l2 =
   | Lprim(p1, al1), Lprim(p2, al2) ->
       p1 = p2 && samelist same al1 al2
   | Lswitch(a1, s1), Lswitch(a2, s2) ->
-      same a1 a2 && sameswitch s1 s2
+      Ident.same a1 a2 && sameswitch s1 s2
   | Lstaticraise(n1, al1), Lstaticraise(n2, al2) ->
       n1 = n2 && samelist same al1 al2
   | Lstaticcatch(a1, (n1, idl1), b1), Lstaticcatch(a2, (n2, idl2), b2) ->
@@ -270,8 +278,7 @@ let rec iter f = function
       List.iter (fun (id, exp) -> f exp) decl
   | Lprim(p, args) ->
       List.iter f args
-  | Lswitch(arg, sw) ->
-      f arg;
+  | Lswitch(id, sw) ->
       List.iter (fun (key, case) -> f case) sw.sw_consts;
       List.iter (fun (key, case) -> f case) sw.sw_blocks;
       begin match sw.sw_failaction with
@@ -399,8 +406,8 @@ let subst_lambda s lam =
   | Llet(str, id, arg, body) -> Llet(str, id, subst arg, subst body)
   | Lletrec(decl, body) -> Lletrec(List.map subst_decl decl, subst body)
   | Lprim(p, args) -> Lprim(p, List.map subst args)
-  | Lswitch(arg, sw) ->
-      Lswitch(subst arg,
+  | Lswitch(id, sw) ->
+      Lswitch(id,
               {sw with sw_consts = List.map subst_case sw.sw_consts;
                        sw_blocks = List.map subst_case sw.sw_blocks;
                        sw_failaction =

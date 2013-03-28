@@ -530,7 +530,7 @@ let rec close fenv cenv = function
         in
         let (new_fun, approx) = close fenv cenv
           (Lfunction(
-            Curried, final_args, Lapply(funct, internal_args, loc)))
+            Curried, List.map (fun i -> i,Lt_top) final_args, Lapply(funct, internal_args, loc)))
         in
         let new_fun = iter first_args new_fun in
         (new_fun, approx)
@@ -626,9 +626,9 @@ let rec close fenv cenv = function
        Value_unknown)
   | Lprim(p, args) ->
       simplif_prim p (close_list_approx fenv cenv args) Debuginfo.none
-  | Lswitch(arg, sw) ->
+  | Lswitch(id, sw) ->
 (* NB: failaction might get copied, thus it should be some Lstaticraise *)
-      let (uarg, _) = close fenv cenv arg in
+      let (uarg, _) = close fenv cenv (Lvar id) in
       let const_index, const_actions =
         close_switch fenv cenv sw.sw_consts sw.sw_numconsts sw.sw_failaction
       and block_index, block_actions =
@@ -724,7 +724,7 @@ and close_functions fenv cenv fun_defs =
                fun_arity = (if kind = Tupled then -arity else arity);
                fun_closed = initially_closed;
                fun_inline = None } in
-            (id, params, body, fundesc)
+            (id, List.map fst params, body, fundesc)
         | (_, _) -> fatal_error "Closure.close_functions")
       fun_defs in
   (* Build an approximate fenv for compiling the functions *)

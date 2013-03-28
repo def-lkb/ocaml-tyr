@@ -701,7 +701,7 @@ let rec comp_expr env exp sz cont =
       for i = sw.sw_numconsts - 1 downto 0 do
         lbl_consts.(i) <- lbls.(act_consts.(i))
       done;
-      comp_expr env arg sz (Kswitch(lbl_consts, lbl_blocks) :: !c)
+      comp_expr env (Lvar arg) sz (Kswitch(lbl_consts, lbl_blocks) :: !c)
   | Lassign(id, expr) ->
       begin try
         let pos = Ident.find_same id env.ce_stack in

@@ -1379,7 +1379,7 @@ let inline_lazy_force_switch arg loc =
        Lifthenelse(
          Lprim(Pisint, [varg]), varg,
          (Lswitch
-            (varg,
+            (idarg,
              { sw_numconsts = 0; sw_consts = [];
                sw_numblocks = (max Obj.lazy_tag Obj.forward_tag) + 1;
                sw_blocks =
@@ -1626,20 +1626,20 @@ let make_switch_offset arg min_key max_key int_lambda_list default  =
   let cases =
     List.map (fun (key, l) -> (key - min_key, l)) int_lambda_list in
   let offsetarg = make_offset (-min_key) arg in
-  Lswitch(offsetarg,
-          {sw_numconsts = numcases; sw_consts = cases;
-            sw_numblocks = 0; sw_blocks = [];
-            sw_failaction = default})
+  switch_alias ~name:"offset" offsetarg
+    {sw_numconsts = numcases; sw_consts = cases;
+     sw_numblocks = 0; sw_blocks = [];
+     sw_failaction = default}
 
 let make_switch_switcher arg cases acts =
   let l = ref [] in
   for i = Array.length cases-1 downto 0 do
     l := (i,acts.(cases.(i))) ::  !l
   done ;
-  Lswitch(arg,
-          {sw_numconsts = Array.length cases ; sw_consts = !l ;
-            sw_numblocks = 0 ; sw_blocks =  []  ;
-            sw_failaction = None})
+  switch_alias arg
+   {sw_numconsts = Array.length cases ; sw_consts = !l ;
+    sw_numblocks = 0 ; sw_blocks =  []  ;
+    sw_failaction = None}
 
 let full sw =
   List.length sw.sw_consts = sw.sw_numconsts &&
@@ -1670,15 +1670,14 @@ let make_switch (arg,sw) = match sw.sw_failaction with
         | (_,Lstaticraise (j,[]))::rem when j=default ->
             remove rem
         | x::rem -> x::remove rem in
-      Lswitch
-        (arg,
-         {sw with
-sw_consts = remove sw.sw_consts ;
-sw_blocks = remove sw.sw_blocks ;
-sw_failaction = Some (Lstaticraise (default,[]))})
+      switch_alias arg
+        {sw with
+          sw_consts = remove sw.sw_consts ;
+          sw_blocks = remove sw.sw_blocks ;
+          sw_failaction = Some (Lstaticraise (default,[]))}
     else
-      Lswitch (arg,sw)
-| _ -> Lswitch (arg,sw)
+      switch_alias arg sw
+| _ -> switch_alias arg sw
 
 module SArg = struct
   type primitive = Lambda.primitive
@@ -2299,10 +2298,10 @@ let rec lower_bind v arg lam = match lam with
     | _,_,_ -> bind Alias v arg lam
     end
 | Lswitch (ls,({sw_consts=[i,act] ; sw_blocks = []} as sw))
-    when not (approx_present v ls) ->
+    when not (approx_present v (Lvar ls)) ->
       Lswitch (ls, {sw with sw_consts = [i,lower_bind v arg act]})
 | Lswitch (ls,({sw_consts=[] ; sw_blocks = [i,act]} as sw))
-    when not (approx_present v ls) ->
+    when not (approx_present v (Lvar ls)) ->
       Lswitch (ls, {sw with sw_blocks = [i,lower_bind v arg act]})
 | Llet (Alias, vv, lv, l) ->
     if approx_present v lv then

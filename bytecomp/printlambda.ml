@@ -307,7 +307,7 @@ let rec lam ppf = function
        "@[<1>(%s[%d,%d] %a@ @[<v 0>%a@])@]"
        (match sw.sw_failaction with None -> "switch*" | _ -> "switch")
        sw.sw_numconsts sw.sw_numblocks
-       lam larg switch sw
+       Ident.print larg switch sw
   | Lstaticraise (i, ls)  ->
       let lams ppf largs =
         List.iter (fun l -> fprintf ppf "@ %a" lam l) largs in

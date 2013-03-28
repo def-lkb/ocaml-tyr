@@ -58,8 +58,8 @@ let rec lambda_of_tree = function
         | _ -> failwith "Invalid 'letrec' binding"
       in
       Lletrec (aux vars, lambda_of_tree body)
-  | List (_, PSymbol (("switch*"|"switch"), [PInt sw_numconsts; PInt sw_numblocks]) :: larg :: cases) ->
-      let larg = lambda_of_tree larg in
+  | List (_, PSymbol (("switch*"|"switch"), [PInt sw_numconsts; PInt
+  sw_numblocks]) :: (Ident id) :: cases) ->
       let rec aux consts blocks = function
         | PSymbol ("case", [PString "int"; PInt i]) :: handler :: rest ->
             aux ((i, lambda_of_tree handler) :: consts) blocks rest
@@ -71,7 +71,7 @@ let rec lambda_of_tree = function
         | _ -> failwith "Invalid 'switch' binding"
       in
       let sw_failaction, sw_consts, sw_blocks = aux [] [] cases in
-      Lswitch (larg, { sw_numconsts ; sw_numblocks ; sw_consts ; sw_blocks ; sw_failaction })
+      Lswitch (id, { sw_numconsts ; sw_numblocks ; sw_consts ; sw_blocks ; sw_failaction })
   | List (_,[Symbol "try"; lbody ; Symbol "with"; Ident param ; lhandler]) ->
       Ltrywith (lambda_of_tree lbody, param, lambda_of_tree lhandler)
   | List (_,[Symbol "if"; lcond; lthen; lelse]) ->
