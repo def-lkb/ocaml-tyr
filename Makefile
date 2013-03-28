@@ -35,7 +35,7 @@ CAMLP4OUT=$(CAMLP4:=out)
 CAMLP4OPT=$(CAMLP4:=opt)
 
 INCLUDES=-I utils -I parsing -I typing -I bytecomp -I asmcomp -I driver \
-	 -I toplevel -I lambda
+	 -I toplevel
 
 UTILS=utils/misc.cmo utils/tbl.cmo utils/config.cmo \
   utils/clflags.cmo utils/terminfo.cmo utils/ccomp.cmo utils/warnings.cmo \
@@ -58,9 +58,9 @@ TYPING=typing/ident.cmo typing/path.cmo \
   typing/typedecl.cmo typing/typeclass.cmo \
   typing/typemod.cmo
 
-COMP=lambda/lambda.cmo lambda/printlambda.cmo \
-  lambda/lambdaparser_def.cmo lambda/lambdaparser.cmo \
-  lambda/lambdalexer.cmo lambda/lambdaparse.cmo \
+COMP=bytecomp/lambda.cmo bytecomp/printlambda.cmo \
+  bytecomp/lambdaparser_def.cmo bytecomp/lambdaparser.cmo \
+  bytecomp/lambdalexer.cmo bytecomp/lambdaparse.cmo \
   bytecomp/typeopt.cmo bytecomp/switch.cmo bytecomp/matching.cmo \
   bytecomp/translobj.cmo bytecomp/translcore.cmo \
   bytecomp/translclass.cmo bytecomp/translmod.cmo \
@@ -449,29 +449,29 @@ beforedepend:: parsing/lexer.ml
 
 # The lambda parser
 
-lambda/lambdaparse.cmo: lambda/printlambda.cmi
+bytecomp/lambdaparse.cmo: bytecomp/printlambda.cmi
 
-lambda/lambdaparser.cmo: lambda/lambdaparser.cmi
+bytecomp/lambdaparser.cmo: bytecomp/lambdaparser.cmi
 
-lambda/lambdaparser.mli lambda/lambdaparser.ml: lambda/lambdaparser.mly lambda/lambda.cmi
-	$(CAMLYACC) $(YACCFLAGS) lambda/lambdaparser.mly
+bytecomp/lambdaparser.mli bytecomp/lambdaparser.ml: bytecomp/lambdaparser.mly bytecomp/lambda.cmi
+	$(CAMLYACC) $(YACCFLAGS) bytecomp/lambdaparser.mly
 
 partialclean::
-	rm -f lambda/lambdaparser.mli lambda/lambdaparser.ml lambda/lambdaparser.output
+	rm -f bytecomp/lambdaparser.mli bytecomp/lambdaparser.ml bytecomp/lambdaparser.output
 
-beforedepend:: lambda/lambdaparser.mli lambda/lambdaparser.ml
+beforedepend:: bytecomp/lambdaparser.mli bytecomp/lambdaparser.ml
 
 # The lambda lexer
 
-lambda/lambdalexer.cmo: lambda/lambdaparser_def.cmi
+bytecomp/lambdalexer.cmo: bytecomp/lambdaparser_def.cmi
 
-lambda/lambdalexer.ml: lambda/lambdalexer.mll 
-	$(CAMLLEX) lambda/lambdalexer.mll
+bytecomp/lambdalexer.ml: bytecomp/lambdalexer.mll 
+	$(CAMLLEX) bytecomp/lambdalexer.mll
 
 partialclean::
-	rm -f lambda/lambdalexer.ml
+	rm -f bytecomp/lambdalexer.ml
 
-beforedepend:: lambda/lambdalexer.ml
+beforedepend:: bytecomp/lambdalexer.ml
 
 # Shared parts of the system compiled with the native-code compiler
 

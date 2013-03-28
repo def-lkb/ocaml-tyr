@@ -130,7 +130,7 @@ tools/read_cmt
 utils/config.ml
 yacc/ocamlyacc
 yacc/version.h
-lambda/lambdalexer.ml
-lambda/lambdaparser.ml
-lambda/lambdaparser.mli
-lambda/lambdaparser.output
+bytecomp/lambdalexer.ml
+bytecomp/lambdaparser.ml
+bytecomp/lambdaparser.mli
+bytecomp/lambdaparser.output
