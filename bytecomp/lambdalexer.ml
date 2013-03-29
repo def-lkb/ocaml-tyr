@@ -1,4 +1,4 @@
-# 1 "lambda/lambdalexer.mll"
+# 1 "bytecomp/lambdalexer.mll"
  
 open Lexing
 open Lambdaparser
@@ -109,7 +109,7 @@ let token_to_string = function
   | COMMA -> ","
   | EOF -> "EOF"
 
-# 113 "lambda/lambdalexer.ml"
+# 113 "bytecomp/lambdalexer.ml"
 let __ocaml_lex_tables = {
   Lexing.lex_base = 
    "\000\000\233\255\054\000\064\000\097\000\242\255\139\000\172\000\
@@ -1254,67 +1254,67 @@ let rec token buf lexbuf =
 and __ocaml_lex_token_rec buf lexbuf __ocaml_lex_state =
   match Lexing.new_engine __ocaml_lex_tables __ocaml_lex_state lexbuf with
       | 0 ->
-# 140 "lambda/lambdalexer.mll"
+# 140 "bytecomp/lambdalexer.mll"
             ( found_newline lexbuf 1; token buf lexbuf )
-# 1260 "lambda/lambdalexer.ml"
+# 1260 "bytecomp/lambdalexer.ml"
 
   | 1 ->
-# 141 "lambda/lambdalexer.mll"
+# 141 "bytecomp/lambdalexer.mll"
                 ( token buf lexbuf )
-# 1265 "lambda/lambdalexer.ml"
+# 1265 "bytecomp/lambdalexer.ml"
 
   | 2 ->
-# 142 "lambda/lambdalexer.mll"
+# 142 "bytecomp/lambdalexer.mll"
          ( LPAREN )
-# 1270 "lambda/lambdalexer.ml"
+# 1270 "bytecomp/lambdalexer.ml"
 
   | 3 ->
-# 143 "lambda/lambdalexer.mll"
+# 143 "bytecomp/lambdalexer.mll"
          ( RPAREN )
-# 1275 "lambda/lambdalexer.ml"
+# 1275 "bytecomp/lambdalexer.ml"
 
   | 4 ->
-# 144 "lambda/lambdalexer.mll"
+# 144 "bytecomp/lambdalexer.mll"
          ( LBRACKET )
-# 1280 "lambda/lambdalexer.ml"
+# 1280 "bytecomp/lambdalexer.ml"
 
   | 5 ->
-# 145 "lambda/lambdalexer.mll"
+# 145 "bytecomp/lambdalexer.mll"
          ( RBRACKET )
-# 1285 "lambda/lambdalexer.ml"
+# 1285 "bytecomp/lambdalexer.ml"
 
   | 6 ->
-# 146 "lambda/lambdalexer.mll"
+# 146 "bytecomp/lambdalexer.mll"
          ( LBRACKETBAR )
-# 1290 "lambda/lambdalexer.ml"
+# 1290 "bytecomp/lambdalexer.ml"
 
   | 7 ->
-# 147 "lambda/lambdalexer.mll"
+# 147 "bytecomp/lambdalexer.mll"
          ( RBRACKETBAR )
-# 1295 "lambda/lambdalexer.ml"
+# 1295 "bytecomp/lambdalexer.ml"
 
   | 8 ->
-# 148 "lambda/lambdalexer.mll"
+# 148 "bytecomp/lambdalexer.mll"
          ( COLON )
-# 1300 "lambda/lambdalexer.ml"
+# 1300 "bytecomp/lambdalexer.ml"
 
   | 9 ->
-# 149 "lambda/lambdalexer.mll"
+# 149 "bytecomp/lambdalexer.mll"
          ( COMMA )
-# 1305 "lambda/lambdalexer.ml"
+# 1305 "bytecomp/lambdalexer.ml"
 
   | 10 ->
 let
-# 150 "lambda/lambdalexer.mll"
+# 150 "bytecomp/lambdalexer.mll"
                     lit
-# 1311 "lambda/lambdalexer.ml"
+# 1311 "bytecomp/lambdalexer.ml"
 = Lexing.sub_lexeme lexbuf lexbuf.Lexing.lex_start_pos lexbuf.Lexing.lex_mem.(0)
 and
-# 150 "lambda/lambdalexer.mll"
+# 150 "bytecomp/lambdalexer.mll"
                                                 kind
-# 1316 "lambda/lambdalexer.ml"
+# 1316 "bytecomp/lambdalexer.ml"
 = Lexing.sub_lexeme lexbuf lexbuf.Lexing.lex_mem.(0) lexbuf.Lexing.lex_curr_pos in
-# 151 "lambda/lambdalexer.mll"
+# 151 "bytecomp/lambdalexer.mll"
     ( try
         begin match kind with
           | ""  -> INT (cvt_int_literal lit)
@@ -1335,126 +1335,126 @@ and
         in
         raise (Error (Literal_overflow k, Location.curr lexbuf))
     )
-# 1339 "lambda/lambdalexer.ml"
+# 1339 "bytecomp/lambdalexer.ml"
 
   | 11 ->
 let
-# 172 "lambda/lambdalexer.mll"
+# 172 "bytecomp/lambdalexer.mll"
                      lit
-# 1345 "lambda/lambdalexer.ml"
+# 1345 "bytecomp/lambdalexer.ml"
 = Lexing.sub_lexeme lexbuf lexbuf.Lexing.lex_start_pos lexbuf.Lexing.lex_curr_pos in
-# 173 "lambda/lambdalexer.mll"
+# 173 "bytecomp/lambdalexer.mll"
     ( FLOAT (remove_underscores lit) )
-# 1349 "lambda/lambdalexer.ml"
+# 1349 "bytecomp/lambdalexer.ml"
 
   | 12 ->
-# 175 "lambda/lambdalexer.mll"
+# 175 "bytecomp/lambdalexer.mll"
     ( let string_start = lexbuf.lex_start_p in
       string_start_loc := Location.curr lexbuf;
       scan_string buf lexbuf;
       lexbuf.lex_start_p <- string_start;
       CONST (Const_immstring (buf_contents buf)) )
-# 1358 "lambda/lambdalexer.ml"
+# 1358 "bytecomp/lambdalexer.ml"
 
   | 13 ->
-# 181 "lambda/lambdalexer.mll"
+# 181 "bytecomp/lambdalexer.mll"
     ( let string_start = lexbuf.lex_start_p in
       string_start_loc := Location.curr lexbuf;
       scan_string buf lexbuf;
       lexbuf.lex_start_p <- string_start;
       CONST (Const_base (Const_string (buf_contents buf))) )
-# 1367 "lambda/lambdalexer.ml"
+# 1367 "bytecomp/lambdalexer.ml"
 
   | 14 ->
 let
-# 188 "lambda/lambdalexer.mll"
+# 188 "bytecomp/lambdalexer.mll"
                                                             name
-# 1373 "lambda/lambdalexer.ml"
+# 1373 "bytecomp/lambdalexer.ml"
 = Lexing.sub_lexeme lexbuf lexbuf.Lexing.lex_start_pos lexbuf.Lexing.lex_mem.(0)
 and
-# 189 "lambda/lambdalexer.mll"
+# 189 "bytecomp/lambdalexer.mll"
                         i
-# 1378 "lambda/lambdalexer.ml"
+# 1378 "bytecomp/lambdalexer.ml"
 = Lexing.sub_lexeme lexbuf (lexbuf.Lexing.lex_mem.(0) + 1) lexbuf.Lexing.lex_mem.(1)
 and
-# 189 "lambda/lambdalexer.mll"
+# 189 "bytecomp/lambdalexer.mll"
                                     g
-# 1383 "lambda/lambdalexer.ml"
+# 1383 "bytecomp/lambdalexer.ml"
 = Lexing.sub_lexeme lexbuf lexbuf.Lexing.lex_mem.(1) lexbuf.Lexing.lex_curr_pos in
-# 190 "lambda/lambdalexer.mll"
+# 190 "bytecomp/lambdalexer.mll"
     ( try 
         let ident = { Ident. name ; flags = 0 ; stamp = (cvt_int_literal i) } in
         (match g with "g" -> Ident.make_global ident | _ -> ());
         IDENT ident
       with Failure _ ->
         raise (Error (Literal_overflow "Ident stamp", Location.curr lexbuf)) )
-# 1392 "lambda/lambdalexer.ml"
+# 1392 "bytecomp/lambdalexer.ml"
 
   | 15 ->
 let
-# 196 "lambda/lambdalexer.mll"
+# 196 "bytecomp/lambdalexer.mll"
                                                     name
-# 1398 "lambda/lambdalexer.ml"
+# 1398 "bytecomp/lambdalexer.ml"
 = Lexing.sub_lexeme lexbuf lexbuf.Lexing.lex_start_pos (lexbuf.Lexing.lex_curr_pos + -1)
 and
-# 196 "lambda/lambdalexer.mll"
+# 196 "bytecomp/lambdalexer.mll"
                                                                         tag
-# 1403 "lambda/lambdalexer.ml"
+# 1403 "bytecomp/lambdalexer.ml"
 = Lexing.sub_lexeme_char lexbuf (lexbuf.Lexing.lex_curr_pos + -1) in
-# 197 "lambda/lambdalexer.mll"
+# 197 "bytecomp/lambdalexer.mll"
     ( IDENT { Ident. name ; flags = 0 ; stamp = match tag with '#' -> -1 | '!' | _ -> 0 } )
-# 1407 "lambda/lambdalexer.ml"
+# 1407 "bytecomp/lambdalexer.ml"
 
   | 16 ->
 let
-# 200 "lambda/lambdalexer.mll"
+# 200 "bytecomp/lambdalexer.mll"
                                                             str
-# 1413 "lambda/lambdalexer.ml"
+# 1413 "bytecomp/lambdalexer.ml"
 = Lexing.sub_lexeme lexbuf lexbuf.Lexing.lex_start_pos lexbuf.Lexing.lex_mem.(0)
 and
-# 200 "lambda/lambdalexer.mll"
+# 200 "bytecomp/lambdalexer.mll"
                                                                           param
-# 1418 "lambda/lambdalexer.ml"
+# 1418 "bytecomp/lambdalexer.ml"
 = Lexing.sub_lexeme lexbuf lexbuf.Lexing.lex_mem.(0) lexbuf.Lexing.lex_curr_pos in
-# 201 "lambda/lambdalexer.mll"
+# 201 "bytecomp/lambdalexer.mll"
     ( match param with "[" -> PSYMBOL str | _ -> SYMBOL str )
-# 1422 "lambda/lambdalexer.ml"
+# 1422 "bytecomp/lambdalexer.ml"
 
   | 17 ->
-# 204 "lambda/lambdalexer.mll"
+# 204 "bytecomp/lambdalexer.mll"
     ( let c = Lexing.lexeme_char lexbuf 1 in
       found_newline lexbuf 1;
       CONST (Const_base (Const_char c)) )
-# 1429 "lambda/lambdalexer.ml"
+# 1429 "bytecomp/lambdalexer.ml"
 
   | 18 ->
-# 208 "lambda/lambdalexer.mll"
+# 208 "bytecomp/lambdalexer.mll"
     ( let c = Lexing.lexeme_char lexbuf 1 in
       CONST (Const_base (Const_char c)) )
-# 1435 "lambda/lambdalexer.ml"
+# 1435 "bytecomp/lambdalexer.ml"
 
   | 19 ->
-# 211 "lambda/lambdalexer.mll"
+# 211 "bytecomp/lambdalexer.mll"
     ( let c = Lexing.lexeme_char lexbuf 2 in
       CONST (Const_base (Const_char c)) )
-# 1441 "lambda/lambdalexer.ml"
+# 1441 "bytecomp/lambdalexer.ml"
 
   | 20 ->
-# 214 "lambda/lambdalexer.mll"
+# 214 "bytecomp/lambdalexer.mll"
     ( let c = char_for_decimal_code lexbuf 2 in
       CONST (Const_base (Const_char c)) )
-# 1447 "lambda/lambdalexer.ml"
+# 1447 "bytecomp/lambdalexer.ml"
 
   | 21 ->
-# 217 "lambda/lambdalexer.mll"
+# 217 "bytecomp/lambdalexer.mll"
     ( let c = char_for_hexadecimal_code lexbuf 3 in
       CONST (Const_base (Const_char c)) )
-# 1453 "lambda/lambdalexer.ml"
+# 1453 "bytecomp/lambdalexer.ml"
 
   | 22 ->
-# 219 "lambda/lambdalexer.mll"
+# 219 "bytecomp/lambdalexer.mll"
         ( EOF )
-# 1458 "lambda/lambdalexer.ml"
+# 1458 "bytecomp/lambdalexer.ml"
 
   | __ocaml_lex_state -> lexbuf.Lexing.refill_buff lexbuf; __ocaml_lex_token_rec buf lexbuf __ocaml_lex_state
 
@@ -1463,36 +1463,36 @@ and scan_string buf lexbuf =
 and __ocaml_lex_scan_string_rec buf lexbuf __ocaml_lex_state =
   match Lexing.engine __ocaml_lex_tables __ocaml_lex_state lexbuf with
       | 0 ->
-# 223 "lambda/lambdalexer.mll"
+# 223 "bytecomp/lambdalexer.mll"
     ( () )
-# 1469 "lambda/lambdalexer.ml"
+# 1469 "bytecomp/lambdalexer.ml"
 
   | 1 ->
-# 225 "lambda/lambdalexer.mll"
+# 225 "bytecomp/lambdalexer.mll"
     ( (*update_loc lexbuf None 1 false (String.length space);*)
       scan_string buf lexbuf )
-# 1475 "lambda/lambdalexer.ml"
+# 1475 "bytecomp/lambdalexer.ml"
 
   | 2 ->
-# 228 "lambda/lambdalexer.mll"
+# 228 "bytecomp/lambdalexer.mll"
     ( Buffer.add_char buf (char_for_backslash (Lexing.lexeme_char lexbuf 1));
       scan_string buf lexbuf )
-# 1481 "lambda/lambdalexer.ml"
+# 1481 "bytecomp/lambdalexer.ml"
 
   | 3 ->
-# 231 "lambda/lambdalexer.mll"
+# 231 "bytecomp/lambdalexer.mll"
     ( Buffer.add_char buf (char_for_decimal_code lexbuf 1);
       scan_string buf lexbuf )
-# 1487 "lambda/lambdalexer.ml"
+# 1487 "bytecomp/lambdalexer.ml"
 
   | 4 ->
-# 234 "lambda/lambdalexer.mll"
+# 234 "bytecomp/lambdalexer.mll"
     ( Buffer.add_char buf (char_for_hexadecimal_code lexbuf 2);
       scan_string buf lexbuf )
-# 1493 "lambda/lambdalexer.ml"
+# 1493 "bytecomp/lambdalexer.ml"
 
   | 5 ->
-# 237 "lambda/lambdalexer.mll"
+# 237 "bytecomp/lambdalexer.mll"
     ( (* Should be an error, but we are very lax.
        * raise (Error (Illegal_escape (Lexing.lexeme lexbuf),
        * Location.curr lexbuf)) *)
@@ -1501,34 +1501,34 @@ and __ocaml_lex_scan_string_rec buf lexbuf __ocaml_lex_state =
       Buffer.add_char buf (Lexing.lexeme_char lexbuf 0);
       Buffer.add_char buf (Lexing.lexeme_char lexbuf 1);
       scan_string buf lexbuf )
-# 1505 "lambda/lambdalexer.ml"
+# 1505 "bytecomp/lambdalexer.ml"
 
   | 6 ->
-# 246 "lambda/lambdalexer.mll"
+# 246 "bytecomp/lambdalexer.mll"
     ( (* if not (in_comment ()) then
          Location.prerr_warning (Location.curr lexbuf) Warnings.Eol_in_string; *)
       (*update_loc lexbuf None 1 false 0;*)
       Buffer.add_string buf (Lexing.lexeme lexbuf);
       scan_string buf lexbuf )
-# 1514 "lambda/lambdalexer.ml"
+# 1514 "bytecomp/lambdalexer.ml"
 
   | 7 ->
-# 252 "lambda/lambdalexer.mll"
+# 252 "bytecomp/lambdalexer.mll"
     ( raise (Error (Unterminated_string, !string_start_loc)) )
-# 1519 "lambda/lambdalexer.ml"
+# 1519 "bytecomp/lambdalexer.ml"
 
   | 8 ->
-# 254 "lambda/lambdalexer.mll"
+# 254 "bytecomp/lambdalexer.mll"
     ( Buffer.add_char buf (Lexing.lexeme_char lexbuf 0);
       scan_string buf lexbuf )
-# 1525 "lambda/lambdalexer.ml"
+# 1525 "bytecomp/lambdalexer.ml"
 
   | __ocaml_lex_state -> lexbuf.Lexing.refill_buff lexbuf; __ocaml_lex_scan_string_rec buf lexbuf __ocaml_lex_state
 
 ;;
 
-# 257 "lambda/lambdalexer.mll"
+# 257 "bytecomp/lambdalexer.mll"
  
   let token ?(buf=Buffer.create 64) = token buf
 
-# 1535 "lambda/lambdalexer.ml"
+# 1535 "bytecomp/lambdalexer.ml"

@@ -25,12 +25,12 @@ type primitive =
   | Pgetglobal of Ident.t
   | Psetglobal of Ident.t
   (* Operations on heap blocks *)
-  | Pmakeblock of int * mutable_flag
-  | Pfield of int
-  | Psetfield of int * bool
-  | Pfloatfield of int
+  | Pmakeblock     of int * mutable_flag
+  | Pfield         of int
+  | Psetfield      of int * bool
+  | Pfloatfield    of int
   | Psetfloatfield of int
-  | Pduprecord of Types.record_representation * int
+  | Pduprecord     of Types.record_representation * int
   (* Force lazy values *)
   | Plazyforce
   (* External call *)
@@ -41,7 +41,7 @@ type primitive =
   | Psequand | Psequor | Pnot
   (* Integer operations *)
   | Pnegint | Paddint | Psubint | Pmulint | Pdivint | Pmodint
-  | Pandint | Porint | Pxorint
+  | Pandint | Porint  | Pxorint
   | Plslint | Plsrint | Pasrint
   | Pintcomp of comparison
   | Poffsetint of int
@@ -54,12 +54,12 @@ type primitive =
   (* String operations *)
   | Pstringlength | Pstringrefu | Pstringsetu | Pstringrefs | Pstringsets
   (* Array operations *)
-  | Pmakearray of array_kind
+  | Pmakearray   of array_kind
   | Parraylength of array_kind
-  | Parrayrefu of array_kind
-  | Parraysetu of array_kind
-  | Parrayrefs of array_kind
-  | Parraysets of array_kind
+  | Parrayrefu   of array_kind
+  | Parraysetu   of array_kind
+  | Parrayrefs   of array_kind
+  | Parraysets   of array_kind
   (* Test if the argument is a block or an immediate integer *)
   | Pisint
   (* Test if the (integer) argument is outside an interval *)
@@ -69,20 +69,20 @@ type primitive =
   (* Operations on boxed integers (Nativeint.t, Int32.t, Int64.t) *)
   | Pbintofint of boxed_integer
   | Pintofbint of boxed_integer
-  | Pcvtbint of boxed_integer (*source*) * boxed_integer (*destination*)
-  | Pnegbint of boxed_integer
-  | Paddbint of boxed_integer
-  | Psubbint of boxed_integer
-  | Pmulbint of boxed_integer
-  | Pdivbint of boxed_integer
-  | Pmodbint of boxed_integer
-  | Pandbint of boxed_integer
-  | Porbint of boxed_integer
-  | Pxorbint of boxed_integer
-  | Plslbint of boxed_integer
-  | Plsrbint of boxed_integer
-  | Pasrbint of boxed_integer
-  | Pbintcomp of boxed_integer * comparison
+  | Pcvtbint   of boxed_integer (*source*) * boxed_integer (*destination*)
+  | Pnegbint   of boxed_integer
+  | Paddbint   of boxed_integer
+  | Psubbint   of boxed_integer
+  | Pmulbint   of boxed_integer
+  | Pdivbint   of boxed_integer
+  | Pmodbint   of boxed_integer
+  | Pandbint   of boxed_integer
+  | Porbint    of boxed_integer
+  | Pxorbint   of boxed_integer
+  | Plslbint   of boxed_integer
+  | Plsrbint   of boxed_integer
+  | Pasrbint   of boxed_integer
+  | Pbintcomp  of boxed_integer * comparison
   (* Operations on big arrays: (unsafe, #dimensions, kind, layout) *)
   | Pbigarrayref of bool * int * bigarray_kind * bigarray_layout
   | Pbigarrayset of bool * int * bigarray_kind * bigarray_layout
@@ -97,25 +97,25 @@ and boxed_integer =
     Pnativeint | Pint32 | Pint64
 
 and bigarray_kind =
-    Pbigarray_unknown
-  | Pbigarray_float32 | Pbigarray_float64
-  | Pbigarray_sint8 | Pbigarray_uint8
-  | Pbigarray_sint16 | Pbigarray_uint16
-  | Pbigarray_int32 | Pbigarray_int64
-  | Pbigarray_caml_int | Pbigarray_native_int
+  | Pbigarray_unknown
+  | Pbigarray_float32   | Pbigarray_float64
+  | Pbigarray_sint8     | Pbigarray_uint8
+  | Pbigarray_sint16    | Pbigarray_uint16
+  | Pbigarray_int32     | Pbigarray_int64
+  | Pbigarray_caml_int  | Pbigarray_native_int
   | Pbigarray_complex32 | Pbigarray_complex64
 
 and bigarray_layout =
-    Pbigarray_unknown_layout
+  | Pbigarray_unknown_layout
   | Pbigarray_c_layout
   | Pbigarray_fortran_layout
 
 type structured_constant =
-    Const_base of constant
-  | Const_pointer of int
-  | Const_block of int * structured_constant list
+  | Const_base        of constant
+  | Const_pointer     of int
+  | Const_block       of int * structured_constant list
   | Const_float_array of string list
-  | Const_immstring of string
+  | Const_immstring   of string
 
 type function_kind = Curried | Tupled
 
@@ -125,27 +125,13 @@ type meth_kind = Self | Public | Cached
 
 type shared_code = (int * int) list
 
-type lambda_type = 
-  | Lt_top | Lt_bot
-  | Lt_arrow of lambda_type * lambda_type
-  | Lt_value of lambda_val_type
-  | Lt_var of Ident.t
-  | Lt_mu of Ident.t * lambda_type
-
-and lambda_val_type = {
-  blocks : (int * lambda_type list) list;
-  const : [`Any | `Some of int list ];
-}
-
-type lambda_type_env = lambda_type Ident.tbl
-
 type lambda =
-    Lvar of Ident.t
+  | Lvar of Ident.t
   | Lconst of structured_constant
   | Lapply of lambda * lambda list * Location.t
   | Lfunction of function_kind * (Ident.t * lambda_type) list * lambda
   | Llet of let_kind * Ident.t * lambda * lambda
-  | Lletrec of (Ident.t * lambda) list * lambda
+  | Lletrec of (Ident.t * lambda_type * lambda) list * lambda
   | Lprim of primitive * lambda list
   | Lswitch of Ident.t * lambda_switch
   | Lstaticraise of int * lambda list
@@ -159,31 +145,53 @@ type lambda =
   | Lsend of meth_kind * lambda * lambda * lambda list * Location.t
   | Levent of lambda * lambda_event
   | Lifused of Ident.t * lambda
+  | Ltypeabs of Ident.t list * lambda
+  | Ltypeapp of lambda * lambda_type
 
-and lambda_switch =
-  { sw_numconsts: int;
-    sw_consts: (int * lambda) list;
-    sw_numblocks: int;
-    sw_blocks: (int * lambda) list;
-    sw_failaction : lambda option}
+and lambda_switch = {
+  sw_numconsts  : int;
+  sw_consts     : (int * lambda) list;
+  sw_numblocks  : int;
+  sw_blocks     : (int * lambda) list;
+  sw_failaction : lambda option;
+}
 
-and lambda_event =
-  { lev_loc: Location.t;
-    lev_kind: lambda_event_kind;
-    lev_repr: int ref option;
-    lev_env: Env.summary }
+and lambda_event = {
+  lev_loc  : Location.t;
+  lev_kind : lambda_event_kind;
+  lev_repr : int ref option;
+  lev_env  : Env.summary;
+}
 
 and lambda_event_kind =
-    Lev_before
+  | Lev_before
   | Lev_after of Types.type_expr
   | Lev_function
+
+and lambda_type = 
+  | Lt_top
+  | Lt_arrow  of lambda_type * lambda_type
+  | Lt_int
+  | Lt_block  of lambda_block
+  | Lt_var    of Ident.t
+  | Lt_mu     of Ident.t * lambda_type
+  | Lt_forall of Ident.t * lambda_type
+
+and tag = int
+
+and lambda_block = {
+  blocks : (tag * lambda_type list) list;
+  consts : tag list;
+}
+
+type lambda_type_env = lambda_type Ident.tbl
 
 let switch_alias ?(name="alias") larg switch =
   match larg with
     | Lvar x -> Lswitch (x, switch)
     | _ ->
       let alias = Ident.create name in
-      Llet (Alias, alias, larg,
+      Llet (Strict, alias, larg,
         Lswitch (alias, switch))
 
 let const_unit = Const_pointer 0
@@ -234,8 +242,8 @@ let rec same l1 l2 =
   | _, _ ->
       false
 
-and samebinding (id1, c1) (id2, c2) =
-  Ident.same id1 id2 && same c1 c2
+and samebinding (id1, t1, c1) (id2, t2, c2) =
+  Ident.same id1 id2 && same c1 c2 && sametype t1 t2
 
 and sameswitch sw1 sw2 =
   let samecase (n1, a1) (n2, a2) = n1 = n2 && same a1 a2 in
@@ -247,6 +255,19 @@ and sameswitch sw1 sw2 =
     | (None, None) -> true
     | (Some a1, Some a2) -> same a1 a2
     | _ -> false)
+
+and sametype t1 t2 = match t1,t2 with
+  | Lt_top, Lt_top -> true
+  | Lt_arrow (a,b), Lt_arrow (a',b') -> sametype a a' && sametype b b'
+  | Lt_int, Lt_int -> true
+  | Lt_block b, Lt_block b' ->
+      samelist (=) b.consts b'.consts &&
+      samelist (fun (i,ts) (i',ts') -> i = i' && samelist sametype ts ts')
+               b.blocks b'.blocks
+  | Lt_var v, Lt_var v' -> Ident.same v v'
+  | Lt_mu (id,t), Lt_mu (id',t') -> Ident.same id id' && sametype t t'
+  | Lt_forall (id,t), Lt_forall (id',t') -> Ident.same id id' && sametype t t'
+  | _, _ -> false
 
 let name_lambda arg fn =
   match arg with
@@ -264,7 +285,7 @@ let name_lambda_list args fn =
       Llet(Strict, id, arg, name_list (Lvar id :: names) rem) in
   name_list [] args
 
-let rec iter f = function
+let iter f = function
     Lvar _
   | Lconst _ -> ()
   | Lapply(fn, args, _) ->
@@ -275,10 +296,11 @@ let rec iter f = function
       f arg; f body
   | Lletrec(decl, body) ->
       f body;
-      List.iter (fun (id, exp) -> f exp) decl
+      List.iter (fun (id, t, exp) -> f exp) decl
   | Lprim(p, args) ->
       List.iter f args
   | Lswitch(id, sw) ->
+      f (Lvar id);
       List.iter (fun (key, case) -> f case) sw.sw_consts;
       List.iter (fun (key, case) -> f case) sw.sw_blocks;
       begin match sw.sw_failaction with
@@ -307,6 +329,8 @@ let rec iter f = function
       f lam
   | Lifused (v, e) ->
       f e
+  | Ltypeabs (_, l)
+  | Ltypeapp (l, _) -> f l
 
 module IdentSet =
   Set.Make(struct
@@ -320,12 +344,12 @@ let free_ids get l =
     iter free l;
     fv := List.fold_right IdentSet.add (get l) !fv;
     match l with
-      Lfunction(kind, params, body) ->
+    | Lfunction(kind, params, body) ->
         List.iter (fun (id,ty) -> fv := IdentSet.remove id !fv) params
     | Llet(str, id, arg, body) ->
         fv := IdentSet.remove id !fv
     | Lletrec(decl, body) ->
-        List.iter (fun (id, exp) -> fv := IdentSet.remove id !fv) decl
+        List.iter (fun (id, t, exp) -> fv := IdentSet.remove id !fv) decl
     | Lstaticcatch(e1, (_,vars), e2) ->
         List.iter (fun id -> fv := IdentSet.remove id !fv) vars
     | Ltrywith(e1, exn, e2) ->
@@ -334,6 +358,7 @@ let free_ids get l =
         fv := IdentSet.remove v !fv
     | Lassign(id, e) ->
         fv := IdentSet.add id !fv
+    | Ltypeapp _ | Ltypeabs _
     | Lvar _ | Lconst _ | Lapply _
     | Lprim _ | Lswitch _ | Lstaticraise _
     | Lifthenelse _ | Lsequence _ | Lwhile _
@@ -427,7 +452,9 @@ let subst_lambda s lam =
       Lsend (k, subst met, subst obj, List.map subst args, loc)
   | Levent (lam, evt) -> Levent (subst lam, evt)
   | Lifused (v, e) -> Lifused (v, subst e)
-  and subst_decl (id, exp) = (id, subst exp)
+  | Ltypeabs (id, l) -> Ltypeabs (id, subst l)
+  | Ltypeapp (l, t) -> Ltypeapp (subst l, t)
+  and subst_decl (id, t, exp) = (id, t, subst exp)
   and subst_case (key, case) = (key, subst case)
   in subst lam
 
@@ -460,12 +487,6 @@ type error =
 exception Error of error
 let error err = raise (Error err)
 
-  (*| Lt_bot
-  | Lt_arrow of lambda_type * lambda_type
-  | Lt_block of int list * (int * lambda_type list) list
-  | Lt_var of Ident.t
-  | Lt_mu of Ident.t * lambda_type*)
-
 module AssumSet = Set.Make(struct type t = Ident.t * lambda_type let compare = compare end)
 type assumptions = AssumSet.t * AssumSet.t
 
@@ -488,7 +509,6 @@ let assum_r t id assum = (fst assum, AssumSet.add (id,t) (snd assum))
 
 let rec assert_subtype assum tenv t1 t2 = match t1,t2 with
   | _, Lt_top -> ()
-  | Lt_bot, _ -> ()
 
   | Lt_var id, t when assuming_l id t assum -> ()
   | t, Lt_var id when assuming_r t id assum -> ()
@@ -519,17 +539,14 @@ let rec assert_subtype assum tenv t1 t2 = match t1,t2 with
   | Lt_arrow (a1,a2), Lt_arrow (b1,b2) ->
       assert_subtype assum tenv b1 a1;
       assert_subtype assum tenv a2 b2
-  | Lt_value v1, Lt_value v2 ->
+  | Lt_block v1, Lt_block v2 ->
       assert_subvalue assum tenv t1 v1 t2 v2
-  | Lt_top, _ | _, Lt_bot | (Lt_value _ | Lt_arrow _), (Lt_value _ | Lt_arrow _) ->
+  | Lt_top, _ | (Lt_block _ | Lt_arrow _), (Lt_block _ | Lt_arrow _) ->
       error (Not_subtype (t1,t2))
 
 and assert_subvalue assum tenv t1 v1 t2 v2 =
-  let subconst c1 c2 = match c1,c2 with
-    | _, `Any -> true
-    | `Some l1, `Some l2 ->
-        List.for_all (fun tag -> List.exists ((=) tag) l2) l1
-    | _ -> false
+  let subconst l1 l2 = 
+    List.for_all (fun tag -> List.exists ((=) tag) l2) l1
   in
   let subblock b1 b2 =
     List.iter (fun (tag,values) ->
@@ -538,7 +555,7 @@ and assert_subvalue assum tenv t1 v1 t2 v2 =
     ) b1
   in
   try
-    if not (subconst v1.const v2.const) then raise Not_found;
+    if not (subconst v1.consts v2.consts) then raise Not_found;
     subblock v1.blocks v2.blocks
   with Not_found | Invalid_argument "List.iter2" ->
     error (Not_subtype (t1,t2))
@@ -551,7 +568,7 @@ let rec lt_check ~tenv ~env = function
   | Lvar id ->
       (try Ident.find_same id env
        with Not_found -> error (Unbound_var id))
-  | Lconst const -> Lt_bot
+  | Lconst const -> Lt_top (*FIXME*)
   | Lapply (fn,args,loc) ->
       let targs = List.map (lt_check ~tenv ~env) args in
       let tfn = lt_check ~tenv ~env fn in

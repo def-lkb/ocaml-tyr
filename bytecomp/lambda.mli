@@ -134,27 +134,13 @@ type meth_kind = Self | Public | Cached
 
 type shared_code = (int * int) list     (* stack size -> code label *)
 
-type lambda_type = 
-  | Lt_top | Lt_bot
-  | Lt_arrow of lambda_type * lambda_type
-  | Lt_value of lambda_val_type
-  | Lt_var of Ident.t
-  | Lt_mu of Ident.t * lambda_type
-
-and lambda_val_type = {
-  blocks : (int * lambda_type list) list;
-  const : [`Any | `Some of int list ];
-}
-
-type lambda_type_env = lambda_type Ident.tbl
-
 type lambda =
     Lvar of Ident.t
   | Lconst of structured_constant
   | Lapply of lambda * lambda list * Location.t
   | Lfunction of function_kind * (Ident.t * lambda_type) list * lambda
   | Llet of let_kind * Ident.t * lambda * lambda
-  | Lletrec of (Ident.t * lambda) list * lambda
+  | Lletrec of (Ident.t * lambda_type * lambda) list * lambda
   | Lprim of primitive * lambda list
   | Lswitch of Ident.t * lambda_switch
   | Lstaticraise of int * lambda list
@@ -168,6 +154,8 @@ type lambda =
   | Lsend of meth_kind * lambda * lambda * lambda list * Location.t
   | Levent of lambda * lambda_event
   | Lifused of Ident.t * lambda
+  | Ltypeabs of Ident.t list * lambda
+  | Ltypeapp of lambda * lambda_type
 
 and lambda_switch =
   { sw_numconsts: int;                  (* Number of integer cases *)
@@ -185,6 +173,24 @@ and lambda_event_kind =
     Lev_before
   | Lev_after of Types.type_expr
   | Lev_function
+
+and lambda_type = 
+  | Lt_top
+  | Lt_arrow  of lambda_type * lambda_type
+  | Lt_int
+  | Lt_block  of lambda_block
+  | Lt_var    of Ident.t
+  | Lt_mu     of Ident.t * lambda_type
+  | Lt_forall of Ident.t * lambda_type
+
+and tag = int
+
+and lambda_block = {
+  blocks : (tag * lambda_type list) list;
+  consts : tag list;
+}
+
+type lambda_type_env = lambda_type Ident.tbl
 
 val same: lambda -> lambda -> bool
 val const_unit: structured_constant
