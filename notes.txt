@@ -80,6 +80,10 @@ Lifused of Ident.t * lambda
 Typing
 ------
 
+Typage des primitives : explicite ?
+
+La mutabilité n'est pas traquée
+
 Translation
 -----------
 

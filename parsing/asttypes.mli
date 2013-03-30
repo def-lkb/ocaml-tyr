@@ -27,6 +27,9 @@ type rec_flag = Nonrecursive | Recursive | Default
 
 type direction_flag = Upto | Downto
 
+let typeof_prim = function
+  |
+
 type private_flag = Private | Public
 
 type mutable_flag = Immutable | Mutable

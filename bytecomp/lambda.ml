@@ -110,10 +110,12 @@ and bigarray_layout =
   | Pbigarray_c_layout
   | Pbigarray_fortran_layout
 
+type tag = int
+
 type structured_constant =
   | Const_base        of constant
-  | Const_pointer     of int
-  | Const_block       of int * structured_constant list
+  | Const_pointer     of tag
+  | Const_block       of tag * structured_constant list
   | Const_float_array of string list
   | Const_immstring   of string
 
@@ -132,7 +134,11 @@ type lambda =
   | Lfunction of function_kind * (Ident.t * lambda_type) list * lambda
   | Llet of let_kind * Ident.t * lambda * lambda
   | Lletrec of (Ident.t * lambda_type * lambda) list * lambda
-  | Lprim of primitive * lambda list
+    (* type list: primitives are full of polymorphism,
+     * but are not first-class lambda, so we need a separate
+     * mechanism to instantiate type variables
+     *)
+  | Lprim of primitive * lambda_type list * lambda list
   | Lswitch of Ident.t * lambda_switch
   | Lstaticraise of int * lambda list
   | Lstaticcatch of lambda * (int * Ident.t list) * lambda
@@ -171,13 +177,21 @@ and lambda_event_kind =
 and lambda_type = 
   | Lt_top
   | Lt_arrow  of lambda_type * lambda_type
-  | Lt_int
+  | Lt_const  of lambda_type_const
+  | Lt_array  of lambda_type
   | Lt_block  of lambda_block
   | Lt_var    of Ident.t
   | Lt_mu     of Ident.t * lambda_type
   | Lt_forall of Ident.t * lambda_type
 
-and tag = int
+and lambda_type_const =
+  | Lt_const_int
+  | Lt_const_char
+  | Lt_const_string
+  | Lt_const_float
+  | Lt_const_int32
+  | Lt_const_int64
+  | Lt_const_nativeint
 
 and lambda_block = {
   blocks : (tag * lambda_type list) list;
@@ -185,6 +199,20 @@ and lambda_block = {
 }
 
 type lambda_type_env = lambda_type Ident.tbl
+
+type error =
+  | Not_subtype  of lambda_type * lambda_type
+  | Cant_apply   of lambda_type * lambda_type
+  | Unbound_var  of Ident.t
+  | Unbound_tvar of Ident.t
+  | Tvar_capture of Ident.t
+  | Fail of string
+
+exception Error of error
+let error err = raise (Error err)
+
+let lt_pointer i = Lt_block { blocks = [] ; consts = [i] } 
+let lt_unit = lt_pointer 0
 
 let switch_alias ?(name="alias") larg switch =
   match larg with
@@ -212,8 +240,8 @@ let rec same l1 l2 =
       k1 = k2 && Ident.same id1 id2 && same a1 a2 && same b1 b2
   | Lletrec (bl1, a1), Lletrec (bl2, a2) ->
       samelist samebinding bl1 bl2 && same a1 a2
-  | Lprim(p1, al1), Lprim(p2, al2) ->
-      p1 = p2 && samelist same al1 al2
+  | Lprim(p1, tl1, al1), Lprim(p2, tl2, al2) ->
+      p1 = p2 && samelist sametype tl1 tl2 && samelist same al1 al2
   | Lswitch(a1, s1), Lswitch(a2, s2) ->
       Ident.same a1 a2 && sameswitch s1 s2
   | Lstaticraise(n1, al1), Lstaticraise(n2, al2) ->
@@ -239,6 +267,10 @@ let rec same l1 l2 =
       same a1 a2 && ev1.lev_loc = ev2.lev_loc
   | Lifused(id1, a1), Lifused(id2, a2) ->
       Ident.same id1 id2 && same a1 a2
+  | Ltypeapp (l1,t1), Ltypeapp (l2,t2) ->
+      same l1 l2 && sametype t1 t2
+  | Ltypeabs (ids1,l1), Ltypeabs (ids2,l2) ->
+      samelist Ident.same ids1 ids2 && same l1 l2
   | _, _ ->
       false
 
@@ -259,7 +291,7 @@ and sameswitch sw1 sw2 =
 and sametype t1 t2 = match t1,t2 with
   | Lt_top, Lt_top -> true
   | Lt_arrow (a,b), Lt_arrow (a',b') -> sametype a a' && sametype b b'
-  | Lt_int, Lt_int -> true
+  | Lt_const c, Lt_const c' -> sametconst c c'
   | Lt_block b, Lt_block b' ->
       samelist (=) b.consts b'.consts &&
       samelist (fun (i,ts) (i',ts') -> i = i' && samelist sametype ts ts')
@@ -268,6 +300,16 @@ and sametype t1 t2 = match t1,t2 with
   | Lt_mu (id,t), Lt_mu (id',t') -> Ident.same id id' && sametype t t'
   | Lt_forall (id,t), Lt_forall (id',t') -> Ident.same id id' && sametype t t'
   | _, _ -> false
+
+and sametconst c1 c2 = match c1,c2 with
+  | Lt_const_int      , Lt_const_int      
+  | Lt_const_char     , Lt_const_char
+  | Lt_const_string   , Lt_const_string
+  | Lt_const_float    , Lt_const_float
+  | Lt_const_int32    , Lt_const_int32
+  | Lt_const_int64    , Lt_const_int64
+  | Lt_const_nativeint, Lt_const_nativeint -> true
+  | _ -> false
 
 let name_lambda arg fn =
   match arg with
@@ -458,6 +500,33 @@ let subst_lambda s lam =
   and subst_case (key, case) = (key, subst case)
   in subst lam
 
+let subst_type s ty =
+  let rec subst = function
+    | Lt_var id as t ->
+      begin try Ident.find_same id s with Not_found -> t end
+    | Lt_top | Lt_const _ as t -> t
+    | Lt_arrow (t1,t2) -> Lt_arrow (subst t1, subst t2)
+    | Lt_block b ->
+      Lt_block { b with blocks = List.map subst_block b.blocks }
+    | Lt_mu (id,t) ->
+      begin try
+          ignore (Ident.find_same id s);
+          error (Tvar_capture id)
+        with Not_found ->
+          Lt_mu (id, subst t)
+      end
+    | Lt_array t -> Lt_array (subst t)
+    | Lt_forall (id,t) ->
+      begin try
+          ignore (Ident.find_same id s);
+          error (Tvar_capture id)
+        with Not_found ->
+          Lt_forall (id, subst t)
+      end
+      and subst_block (tag,ts) = tag, List.map subst ts
+  in
+  subst ty
+
 
 (* To let-bind expressions to variables *)
 
@@ -467,27 +536,198 @@ let bind str var exp body =
   | _ -> Llet(str, var, exp, body)
 
 and commute_comparison = function
-| Ceq -> Ceq| Cneq -> Cneq
-| Clt -> Cgt | Cle -> Cge
-| Cgt -> Clt | Cge -> Cle
+  | Ceq -> Ceq| Cneq -> Cneq
+  | Clt -> Cgt | Cle -> Cge
+  | Cgt -> Clt | Cge -> Cle
 
 and negate_comparison = function
-| Ceq -> Cneq| Cneq -> Ceq
-| Clt -> Cge | Cle -> Cgt
-| Cgt -> Cle | Cge -> Clt
+  | Ceq -> Cneq| Cneq -> Ceq
+  | Clt -> Cge | Cle -> Cgt
+  | Cgt -> Cle | Cge -> Clt
 
 (* Type-check lambda expression *)
+type context = { vars : lambda_type Ident.tbl }
 
-type error =
-  | Not_subtype of lambda_type * lambda_type
-  | Cant_apply of lambda_type * lambda_type
-  | Unbound_var of Ident.t
-  | Unbound_tvar of Ident.t
+let bind_var ctx (id,tyarg) =
+  { (*ctx with*) vars = Ident.add id tyarg ctx.vars }
 
-exception Error of error
-let error err = raise (Error err)
+let typeof_const = function
+  | Const_int    _ -> Lt_const_int
+  | Const_char   _ -> Lt_const_char
+  | Const_string _ -> Lt_const_string
+  | Const_float  _ -> Lt_const_float
+  | Const_int32  _ -> Lt_const_int32
+  | Const_int64  _ -> Lt_const_int64
+  | Const_nativeint _ ->  Lt_const_nativeint
 
-module AssumSet = Set.Make(struct type t = Ident.t * lambda_type let compare = compare end)
+let rec typeof_sconst = function
+  | Const_base        c -> Lt_const (typeof_const c)
+  | Const_pointer     i -> lt_pointer i
+  | Const_block       (i,scs) -> 
+    Lt_block { blocks = [i, List.map typeof_sconst scs] ; consts = [] }
+  | Const_float_array _ -> Lt_array (Lt_const Lt_const_float)
+  | Const_immstring _ -> (Lt_const Lt_const_string)
+
+(* TODO: Replace sametype by appropriate subtyping relation *)
+
+let typeof_prim ctx prim targs = match prim, targs with
+  | Pidentity, [t] ->
+    let tX = Ident.create "X" in
+    Lt_forall (tX, Lt_arrow (Lt_var tX, Lt_var tX))
+  | Pignore ->
+    let tX = Ident.create "X" in
+    Lt_forall (tX, Lt_arrow (Lt_var tX, lt_unit))
+  | Prevapply _ ->
+    let tA, tB = Ident.create "A", Ident.create "B" in
+    Lt_forall (tA, Lt_forall (tB,
+        Lt_arrow (Lt_var tA,
+          Lt_arrow (Lt_arrow (Lt_var tA, Lt_var tB),
+                    Lt_var tB))))
+  | Pdirapply _ ->
+    let tA, tB = Ident.create "A", Ident.create "B" in
+    Lt_forall (tA, Lt_forall (tB,
+        Lt_arrow (Lt_arrow (Lt_var tA, Lt_var tB),
+          Lt_arrow (Lt_var tA,
+                    Lt_var tB))))
+  (* Globals *)
+  | Pgetglobal i ->
+      (try Ident.find_same i ctx.vars
+       with Not_found -> error (Fail "Unbound global"))
+  | Psetglobal i ->
+    let ty = 
+      try Ident.find_same i ctx.vars
+      with Not_found -> error (Fail "Unbound global")
+    in
+    Lt_arrow (ty, lt_unit)
+  (* Operations on heap blocks *)
+  | Pmakeblock     (size,_) ->
+    let rec aux acc = function
+      | i when i < size ->
+        aux (Ident.create ("F" ^ string_of_int i) :: acc) (succ i)
+      | _ -> acc
+    in
+    let rev_idents = aux [] size in
+    let tres = Lt_block { blocks =
+  | Pfield         of int
+  | Psetfield      of int * bool
+  | Pfloatfield    of int
+  | Psetfloatfield of int
+  | Pduprecord     of Types.record_representation * int
+  (* Force lazy values *)
+  | Plazyforce
+  (* External call *)
+  | Pccall of Primitive.description
+  (* Exceptions *)
+  | Praise
+  (* Boolean operations *)
+  | Psequand | Psequor | Pnot
+  (* Integer operations *)
+  | Pnegint | Paddint | Psubint | Pmulint | Pdivint | Pmodint
+  | Pandint | Porint  | Pxorint
+  | Plslint | Plsrint | Pasrint
+  | Pintcomp of comparison
+  | Poffsetint of int
+  | Poffsetref of int
+  (* Float operations *)
+  | Pintoffloat | Pfloatofint
+  | Pnegfloat | Pabsfloat
+  | Paddfloat | Psubfloat | Pmulfloat | Pdivfloat
+  | Pfloatcomp of comparison
+  (* String operations *)
+  | Pstringlength | Pstringrefu | Pstringsetu | Pstringrefs | Pstringsets
+  (* Array operations *)
+  | Pmakearray   of array_kind
+  | Parraylength of array_kind
+  | Parrayrefu   of array_kind
+  | Parraysetu   of array_kind
+  | Parrayrefs   of array_kind
+  | Parraysets   of array_kind
+  (* Test if the argument is a block or an immediate integer *)
+  | Pisint
+  (* Test if the (integer) argument is outside an interval *)
+  | Pisout
+  (* Bitvect operations *)
+  | Pbittest
+  (* Operations on boxed integers (Nativeint.t, Int32.t, Int64.t) *)
+  | Pbintofint of boxed_integer
+  | Pintofbint of boxed_integer
+  | Pcvtbint   of boxed_integer (*source*) * boxed_integer (*destination*)
+  | Pnegbint   of boxed_integer
+  | Paddbint   of boxed_integer
+  | Psubbint   of boxed_integer
+  | Pmulbint   of boxed_integer
+  | Pdivbint   of boxed_integer
+  | Pmodbint   of boxed_integer
+  | Pandbint   of boxed_integer
+  | Porbint    of boxed_integer
+  | Pxorbint   of boxed_integer
+  | Plslbint   of boxed_integer
+  | Plsrbint   of boxed_integer
+  | Pasrbint   of boxed_integer
+  | Pbintcomp  of boxed_integer * comparison
+  (* Operations on big arrays: (unsafe, #dimensions, kind, layout) *)
+  | Pbigarrayref of bool * int * bigarray_kind * bigarray_layout
+  | Pbigarrayset of bool * int * bigarray_kind * bigarray_layout
+
+let rec typeof ctx = function
+  | Lvar v -> 
+    (try Ident.find_same v ctx.vars
+     with Not_found -> error (Unbound_var v))
+  | Lconst c -> typeof_const c
+  | Lapply (lfun,args,_) ->
+    let tfun = typeof ctx lfun in
+    let tapp ty arg =
+      let targ = typeof ctx arg in
+      match ty with
+      | Lt_arrow (targ',tres) when sametype targ targ' ->
+        tres
+      | Lt_arrow _ -> error (Fail "invalid argument type")
+      | _ -> error (Fail "expecting function")
+    in
+    List.fold_left tapp tfun args
+  | Lfunction (Curried,args,body) ->
+    let ctx' = List.fold_left bind_var ctx args in
+    let tbody = typeof ctx' body in
+    List.fold_right (fun (_,targ) tres -> Lt_arrow (targ,tres))
+      args tbody
+  | Lfunction (Tupled,args,body) ->
+    let ctx' = List.fold_left bind_var ctx args in
+    let tbody = typeof ctx' body in
+    let targs = List.map snd args in
+    Lt_arrow (Lt_block { consts = [] ; block = [0,targs] }, tbody)
+  | Llet (_,id,expr,body) ->
+    let texpr = typeof ctx expr in
+    typeof body (bind_var ctx (id,texpr))
+  | Lletrec (bindings, body) ->
+    let ctx' = List.fold_left 
+        (fun ctx (id,ty,_) -> bind_var ctx (id,ty))
+        ctx bindings
+    in
+    let validate (id,ty,expr) =
+      let ty' = typeof ctx' expr in
+      if not sametype ty ty'
+      then error (Fail "type error in letrec") 
+    in
+    List.iter validate bindings;
+    typeof ctx' body 
+  | Lprim of primitive * lambda list
+  | Lswitch of Ident.t * lambda_switch
+  | Lstaticraise of int * lambda list
+  | Lstaticcatch of lambda * (int * Ident.t list) * lambda
+  | Ltrywith of lambda * Ident.t * lambda
+  | Lifthenelse of lambda * lambda * lambda
+  | Lsequence of lambda * lambda
+  | Lwhile of lambda * lambda
+  | Lfor of Ident.t * lambda * lambda * direction_flag * lambda
+  | Lassign of Ident.t * lambda
+  | Lsend of meth_kind * lambda * lambda * lambda list * Location.t
+  | Levent of lambda * lambda_event
+  | Lifused of Ident.t * lambda
+  | Ltypeabs of Ident.t list * lambda
+  | Ltypeapp of lambda * lambda_type
+
+
+(*module AssumSet = Set.Make(struct type t = Ident.t * lambda_type let compare = compare end)
 type assumptions = AssumSet.t * AssumSet.t
 
 type env = {
@@ -539,8 +779,12 @@ let rec assert_subtype assum tenv t1 t2 = match t1,t2 with
   | Lt_arrow (a1,a2), Lt_arrow (b1,b2) ->
       assert_subtype assum tenv b1 a1;
       assert_subtype assum tenv a2 b2
+
   | Lt_block v1, Lt_block v2 ->
       assert_subvalue assum tenv t1 v1 t2 v2
+
+  | Lt_const c1, Lt_const c2 when sametconst c1 c2 ->  ()
+
   | Lt_top, _ | (Lt_block _ | Lt_arrow _), (Lt_block _ | Lt_arrow _) ->
       error (Not_subtype (t1,t2))
 
@@ -558,9 +802,9 @@ and assert_subvalue assum tenv t1 v1 t2 v2 =
     if not (subconst v1.consts v2.consts) then raise Not_found;
     subblock v1.blocks v2.blocks
   with Not_found | Invalid_argument "List.iter2" ->
-    error (Not_subtype (t1,t2))
+    error (Not_subtype (t1,t2)) *)
 
-let lt_app tenv tfn targ = match tfn with
+(*let lt_app tenv tfn targ = match tfn with
   | Lt_arrow (arg,result) -> assert_subtype assum_empty tenv targ arg; result
   | _ -> error (Cant_apply (tfn,targ))
 
@@ -609,4 +853,4 @@ let rec lt_check ~tenv ~env = function
   | Lsend (k,l1,l2,args,loc) -> failwith "TODO"
   | Levent (lam,lev) -> failwith "TODO"
   | Lifused (id,lam) -> failwith "TODO"
-  *)
+  *)*)

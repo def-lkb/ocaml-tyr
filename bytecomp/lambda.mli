@@ -177,11 +177,13 @@ and lambda_event_kind =
 and lambda_type = 
   | Lt_top
   | Lt_arrow  of lambda_type * lambda_type
-  | Lt_int
+  | Lt_const  of lambda_type_const
   | Lt_block  of lambda_block
   | Lt_var    of Ident.t
   | Lt_mu     of Ident.t * lambda_type
   | Lt_forall of Ident.t * lambda_type
+
+and lambda_type_const = C
 
 and tag = int
 
