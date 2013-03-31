@@ -208,26 +208,37 @@ let print_list ?first ?(delim="") ?last printer ppf = function
       List.iter (fprintf ppf "%s@%a" delim printer) tl;
       (match last with Some s -> pp_print_string ppf s | None -> ())
 
+let lam_ty_const = function
+  | Lt_const_int       -> "int"
+  | Lt_const_char      -> "char"
+  | Lt_const_string    -> "string"
+  | Lt_const_float     -> "float"
+  | Lt_const_int32     -> "int32"
+  | Lt_const_int64     -> "int64"
+  | Lt_const_nativeint -> "nativeint"
+
 let rec lam_ty ppf = function
   | Lt_top -> fprintf ppf "top"
-  | Lt_bot -> fprintf ppf "bot"
   | Lt_arrow (t1,t2) -> fprintf ppf "(%a -> %a)" lam_ty t1 lam_ty t2
   | Lt_var id -> Ident.print ppf id
+  | Lt_const c -> pp_print_string ppf (lam_ty_const c)
+  | Lt_array t -> fprintf ppf "(array %a)" lam_ty t
   | Lt_mu (id, t) -> fprintf ppf "(mu %a %a)" Ident.print id lam_ty t
-  | Lt_value { Lambda. const = `Some [] ; blocks = [] }  -> 
-      fprintf ppf "(val)"
-  | Lt_value { Lambda. const ; blocks }  -> 
-      let print_const ppf = function
-        | `Any -> pp_print_string ppf " int"
-        | `Some l -> fprintf ppf " int[%s]"
-            (String.concat "," (List.map string_of_int l))
-      in
-      let print_block ppf (i,tys) =
-        fprintf ppf "(tag[%d]%a)" i (print_list ~first:" " ~delim:" " lam_ty) tys
-      in
-      fprintf ppf "(val%a%a)"
-        print_const const 
-        (print_list print_block) blocks
+  | Lt_forall (ids, t) -> 
+    fprintf ppf "(forall (%a) %a)"
+      (print_list ~delim:" " Ident.print) ids
+      lam_ty t
+  | Lt_block b when is_top_block b -> 
+    fprintf ppf "(exn)"
+  | Lt_block { Lambda. lt_consts ; lt_blocks }  -> 
+    let print_const ppf tag = fprintf ppf "%da" tag in
+    let print_block ppf (tag,tys) =
+      fprintf ppf "(%d:%a)" tag
+        (print_list ~first:" " ~delim:" " lam_ty) tys
+    in
+    fprintf ppf "(block%a%a)"
+      (print_list print_const) lt_consts 
+      (print_list print_block) lt_blocks
 ;; 
 let rec lam ppf = function
   | Lvar id ->
@@ -273,17 +284,19 @@ let rec lam ppf = function
       let bindings ppf id_arg_list =
         let spc = ref false in
         List.iter
-          (fun (id, l) ->
+          (fun ((id,ty), l) ->
             if !spc then fprintf ppf "@ " else spc := true;
-            fprintf ppf "@[<2>%a@ %a@]" Ident.print id lam l)
+            fprintf ppf "@[<2>(%a@ :@ %a)@ %a@]" 
+              Ident.print id  lam_ty ty  lam l)
           id_arg_list in
       fprintf ppf
         "@[<2>(letrec@ (@[<hv 1>%a@])@ %a)@]" bindings id_arg_list lam body
+
   | Lprim(prim, largs) ->
       let lams ppf largs =
         List.iter (fun l -> fprintf ppf "@ %a" lam l) largs in
       fprintf ppf "@[<2>(%a%a)@]" primitive prim lams largs
-  | Lswitch(larg, sw) ->
+  | Lswitch(larg, sw, ty) ->
       let switch ppf sw =
         let spc = ref false in
         List.iter
@@ -302,20 +315,24 @@ let rec lam ppf = function
             if !spc then fprintf ppf "@ " else spc := true;
             fprintf ppf "@[<hv 1>default:@ %a@]" lam l
         end in
-
       fprintf ppf
-       "@[<1>(%s[%d,%d] %a@ @[<v 0>%a@])@]"
+       "@[<1>(%s[%d,%d] %a@ @[<v 0>%a@] : %a)@]"
        (match sw.sw_failaction with None -> "switch*" | _ -> "switch")
        sw.sw_numconsts sw.sw_numblocks
-       Ident.print larg switch sw
+       Ident.print larg
+       switch sw
+       lam_ty ty
   | Lstaticraise (i, ls)  ->
       let lams ppf largs =
         List.iter (fun l -> fprintf ppf "@ %a" lam l) largs in
       fprintf ppf "@[<2>(exit[%d]%a)@]" i lams ls;
-  | Lstaticcatch(lbody, (i, vars), lhandler) ->
+  | Lstaticcatch(lbody, (i, bindings), lhandler) ->
       fprintf ppf "@[<2>(catch@ %a@;<1 -1>with[%d]%a@ %a)@]"
         lam lbody i
-        (fun ppf -> List.iter (fprintf ppf " %a" Ident.print)) vars
+        (print_list ~delim:" "
+           (fun ppf (id,ty) ->
+             fprintf ppf "(%a@ :@ %a)@" Ident.print id lam_ty ty))
+          bindings
         lam lhandler
   | Ltrywith(lbody, param, lhandler) ->
       fprintf ppf "@[<2>(try@ %a@;<1 -1>with %a@ %a)@]"
@@ -340,20 +357,35 @@ let rec lam ppf = function
         if k = Self then "self" else if k = Cached then "cache" else "" in
       fprintf ppf "@[<2>(send%s@ %a@ %a%a)@]" kind lam obj lam met args largs
   | Levent(expr, ev) ->
-      let kind =
-       match ev.lev_kind with
-       | Lev_before -> "before"
-       | Lev_after _  -> "after"
-       | Lev_function -> "funct-body" in
-      fprintf ppf "@[<2>(%s %s(%i)%s:%i-%i@ %a)@]" kind
-              ev.lev_loc.Location.loc_start.Lexing.pos_fname
-              ev.lev_loc.Location.loc_start.Lexing.pos_lnum
-              (if ev.lev_loc.Location.loc_ghost then "<ghost>" else "")
-              ev.lev_loc.Location.loc_start.Lexing.pos_cnum
-              ev.lev_loc.Location.loc_end.Lexing.pos_cnum
-              lam expr
+    let kind =
+      match ev.lev_kind with
+      | Lev_before -> "before"
+      | Lev_after _  -> "after"
+      | Lev_function -> "funct-body"
+    in
+    fprintf ppf "@[<2>(%s %s(%i)%s:%i-%i@ %a)@]" kind
+            ev.lev_loc.Location.loc_start.Lexing.pos_fname
+            ev.lev_loc.Location.loc_start.Lexing.pos_lnum
+            (if ev.lev_loc.Location.loc_ghost then "<ghost>" else "")
+            ev.lev_loc.Location.loc_start.Lexing.pos_cnum
+            ev.lev_loc.Location.loc_end.Lexing.pos_cnum
+            lam expr
   | Lifused(id, expr) ->
-      fprintf ppf "@[<2>(ifused@ %a@ %a)@]" Ident.print id lam expr
+    fprintf ppf "@[<2>(ifused@ %a@ %a)@]" Ident.print id lam expr
+
+  | Ltypeabs (ids, l) ->
+    fprintf ppf "@[<2>(typeabs@ (%a)@ %a)@]"
+      (print_list ~delim:" " Ident.print) ids
+      lam l
+  | Ltypeapp (l, tys) ->
+    fprintf ppf "@[<2>(typeapply@ %a@%a)@]"
+      lam l
+      (print_list ~first:" " ~delim:" " lam_ty) tys
+
+  | Lascribe (l, ty) ->
+    fprintf ppf "@[<2>(%a@ :@ %a)@]"
+      lam l
+      lam_ty ty
 
 and sequence ppf = function
   | Lsequence(l1, l2) ->

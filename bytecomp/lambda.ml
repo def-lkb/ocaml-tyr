@@ -16,12 +16,60 @@ open Misc
 open Path
 open Asttypes
 
+(* ********************** *)
+(** {0 Type definitions} **)
+(* ********************** *)
+
+(** {1 Basic definitions} *)
+
+type tag = int
+
+type structured_constant =
+  | Const_base        of constant
+  | Const_pointer     of tag
+  | Const_block       of tag * structured_constant list
+  | Const_float_array of string list
+  | Const_immstring   of string
+
+type function_kind = Curried | Tupled
+
+type let_kind = Strict | Alias | StrictOpt | Variable
+
+type meth_kind = Self | Public | Cached
+
+type shared_code = (int * int) list
+
+type comparison =
+  | Ceq | Cneq | Clt | Cgt | Cle | Cge
+
+type array_kind =
+  | Pgenarray | Paddrarray | Pintarray | Pfloatarray
+
+type boxed_integer =
+  | Pnativeint | Pint32 | Pint64
+
+type bigarray_kind =
+  | Pbigarray_unknown
+  | Pbigarray_float32   | Pbigarray_float64
+  | Pbigarray_sint8     | Pbigarray_uint8
+  | Pbigarray_sint16    | Pbigarray_uint16
+  | Pbigarray_int32     | Pbigarray_int64
+  | Pbigarray_caml_int  | Pbigarray_native_int
+  | Pbigarray_complex32 | Pbigarray_complex64
+
+type bigarray_layout =
+  | Pbigarray_unknown_layout
+  | Pbigarray_c_layout
+  | Pbigarray_fortran_layout
+
+(** {1 Primitives} *)
+
 type primitive =
-    Pidentity
+  | Pidentity
   | Pignore
   | Prevapply of Location.t
   | Pdirapply of Location.t
-    (* Globals *)
+  (* Globals *)
   | Pgetglobal of Ident.t
   | Psetglobal of Ident.t
   (* Operations on heap blocks *)
@@ -87,61 +135,19 @@ type primitive =
   | Pbigarrayref of bool * int * bigarray_kind * bigarray_layout
   | Pbigarrayset of bool * int * bigarray_kind * bigarray_layout
 
-and comparison =
-    Ceq | Cneq | Clt | Cgt | Cle | Cge
-
-and array_kind =
-    Pgenarray | Paddrarray | Pintarray | Pfloatarray
-
-and boxed_integer =
-    Pnativeint | Pint32 | Pint64
-
-and bigarray_kind =
-  | Pbigarray_unknown
-  | Pbigarray_float32   | Pbigarray_float64
-  | Pbigarray_sint8     | Pbigarray_uint8
-  | Pbigarray_sint16    | Pbigarray_uint16
-  | Pbigarray_int32     | Pbigarray_int64
-  | Pbigarray_caml_int  | Pbigarray_native_int
-  | Pbigarray_complex32 | Pbigarray_complex64
-
-and bigarray_layout =
-  | Pbigarray_unknown_layout
-  | Pbigarray_c_layout
-  | Pbigarray_fortran_layout
-
-type tag = int
-
-type structured_constant =
-  | Const_base        of constant
-  | Const_pointer     of tag
-  | Const_block       of tag * structured_constant list
-  | Const_float_array of string list
-  | Const_immstring   of string
-
-type function_kind = Curried | Tupled
-
-type let_kind = Strict | Alias | StrictOpt | Variable
-
-type meth_kind = Self | Public | Cached
-
-type shared_code = (int * int) list
+(** {1 Expressions of lambda language} *)
 
 type lambda =
   | Lvar of Ident.t
   | Lconst of structured_constant
   | Lapply of lambda * lambda list * Location.t
-  | Lfunction of function_kind * (Ident.t * lambda_type) list * lambda
+  | Lfunction of function_kind * binding list * lambda
   | Llet of let_kind * Ident.t * lambda * lambda
-  | Lletrec of (Ident.t * lambda_type * lambda) list * lambda
-    (* type list: primitives are full of polymorphism,
-     * but are not first-class lambda, so we need a separate
-     * mechanism to instantiate type variables
-     *)
-  | Lprim of primitive * lambda_type list * lambda list
-  | Lswitch of Ident.t * lambda_switch
-  | Lstaticraise of int * lambda list
-  | Lstaticcatch of lambda * (int * Ident.t list) * lambda
+  | Lletrec of (binding * lambda) list * lambda
+  | Lprim of primitive * lambda list
+  | Lswitch of Ident.t * lambda_switch * lambda_type
+  | Lstaticraise of tag * lambda list
+  | Lstaticcatch of lambda * (tag * binding list) * lambda
   | Ltrywith of lambda * Ident.t * lambda
   | Lifthenelse of lambda * lambda * lambda
   | Lsequence of lambda * lambda
@@ -152,7 +158,10 @@ type lambda =
   | Levent of lambda * lambda_event
   | Lifused of Ident.t * lambda
   | Ltypeabs of Ident.t list * lambda
-  | Ltypeapp of lambda * lambda_type
+  | Ltypeapp of lambda * lambda_type list
+  | Lascribe of lambda * lambda_type
+
+and binding = Ident.t * lambda_type
 
 and lambda_switch = {
   sw_numconsts  : int;
@@ -174,6 +183,9 @@ and lambda_event_kind =
   | Lev_after of Types.type_expr
   | Lev_function
 
+
+(** {1 Types of lambda language} *)
+
 and lambda_type = 
   | Lt_top
   | Lt_arrow  of lambda_type * lambda_type
@@ -182,7 +194,7 @@ and lambda_type =
   | Lt_block  of lambda_block
   | Lt_var    of Ident.t
   | Lt_mu     of Ident.t * lambda_type
-  | Lt_forall of Ident.t * lambda_type
+  | Lt_forall of Ident.t list * lambda_type
 
 and lambda_type_const =
   | Lt_const_int
@@ -194,12 +206,15 @@ and lambda_type_const =
   | Lt_const_nativeint
 
 and lambda_block = {
-  blocks : (tag * lambda_type list) list;
-  consts : tag list;
+  lt_blocks : (tag * lambda_type list) list;
+  lt_consts : tag list;
 }
 
-type lambda_type_env = lambda_type Ident.tbl
+(* ********************************* *)
+(** {0 General purpose definitions} **)
+(* ********************************* *)
 
+(** {1 Handling of type errors} *)
 type error =
   | Not_subtype  of lambda_type * lambda_type
   | Cant_apply   of lambda_type * lambda_type
@@ -211,112 +226,42 @@ type error =
 exception Error of error
 let error err = raise (Error err)
 
-let lt_pointer i = Lt_block { blocks = [] ; consts = [i] } 
+(** {1 Lambda types constructors} *)
+let lt_pointer i = Lt_block { lt_blocks = [] ; lt_consts = [i] } 
 let lt_unit = lt_pointer 0
+let lt_bool = Lt_block { lt_blocks = [] ; lt_consts = [0;1] }
+let lt_bot = (* forall A. A *)
+  let tA = Ident.create "A" in
+  Lt_forall ([tA], Lt_var tA)
+let lt_const_int = Lt_const Lt_const_int
+let lt_const_float = Lt_const Lt_const_float
 
-let switch_alias ?(name="alias") larg switch =
+(** The "top" block, a block we don't know anything about.
+    Current definition may make it looks like bottom… *)
+let lt_top_block = Lt_block { lt_blocks = [] ; lt_consts = [] }
+let is_top_block = function
+  | { lt_blocks = [] ; lt_consts = [] } -> true
+  | _ -> false
+
+(** {1 Lambda expressions constructors} *)
+
+let switch_alias ?(name="alias") larg switch ty =
   match larg with
-    | Lvar x -> Lswitch (x, switch)
+    | Lvar x -> Lswitch (x, switch, ty)
     | _ ->
       let alias = Ident.create name in
       Llet (Strict, alias, larg,
-        Lswitch (alias, switch))
+        Lswitch (alias, switch, ty))
 
 let const_unit = Const_pointer 0
 
 let lambda_unit = Lconst const_unit
-
-let rec same l1 l2 =
-  match (l1, l2) with
-  | Lvar v1, Lvar v2 ->
-      Ident.same v1 v2
-  | Lconst c1, Lconst c2 ->
-      c1 = c2
-  | Lapply(a1, bl1, _), Lapply(a2, bl2, _) ->
-      same a1 a2 && samelist same bl1 bl2
-  | Lfunction(k1, idl1, a1), Lfunction(k2, idl2, a2) ->
-      k1 = k2 && samelist (fun (i1,t1) (i2,t2) -> Ident.same i1 i2) idl1 idl2 && same a1 a2
-  | Llet(k1, id1, a1, b1), Llet(k2, id2, a2, b2) ->
-      k1 = k2 && Ident.same id1 id2 && same a1 a2 && same b1 b2
-  | Lletrec (bl1, a1), Lletrec (bl2, a2) ->
-      samelist samebinding bl1 bl2 && same a1 a2
-  | Lprim(p1, tl1, al1), Lprim(p2, tl2, al2) ->
-      p1 = p2 && samelist sametype tl1 tl2 && samelist same al1 al2
-  | Lswitch(a1, s1), Lswitch(a2, s2) ->
-      Ident.same a1 a2 && sameswitch s1 s2
-  | Lstaticraise(n1, al1), Lstaticraise(n2, al2) ->
-      n1 = n2 && samelist same al1 al2
-  | Lstaticcatch(a1, (n1, idl1), b1), Lstaticcatch(a2, (n2, idl2), b2) ->
-      same a1 a2 && n1 = n2 && samelist Ident.same idl1 idl2 && same b1 b2
-  | Ltrywith(a1, id1, b1), Ltrywith(a2, id2, b2) ->
-      same a1 a2 && Ident.same id1 id2 && same b1 b2
-  | Lifthenelse(a1, b1, c1), Lifthenelse(a2, b2, c2) ->
-      same a1 a2 && same b1 b2 && same c1 c2
-  | Lsequence(a1, b1), Lsequence(a2, b2) ->
-      same a1 a2 && same b1 b2
-  | Lwhile(a1, b1), Lwhile(a2, b2) ->
-      same a1 a2 && same b1 b2
-  | Lfor(id1, a1, b1, df1, c1), Lfor(id2, a2, b2, df2, c2) ->
-      Ident.same id1 id2 &&  same a1 a2 &&
-      same b1 b2 && df1 = df2 && same c1 c2
-  | Lassign(id1, a1), Lassign(id2, a2) ->
-      Ident.same id1 id2 && same a1 a2
-  | Lsend(k1, a1, b1, cl1, _), Lsend(k2, a2, b2, cl2, _) ->
-      k1 = k2 && same a1 a2 && same b1 b2 && samelist same cl1 cl2
-  | Levent(a1, ev1), Levent(a2, ev2) ->
-      same a1 a2 && ev1.lev_loc = ev2.lev_loc
-  | Lifused(id1, a1), Lifused(id2, a2) ->
-      Ident.same id1 id2 && same a1 a2
-  | Ltypeapp (l1,t1), Ltypeapp (l2,t2) ->
-      same l1 l2 && sametype t1 t2
-  | Ltypeabs (ids1,l1), Ltypeabs (ids2,l2) ->
-      samelist Ident.same ids1 ids2 && same l1 l2
-  | _, _ ->
-      false
-
-and samebinding (id1, t1, c1) (id2, t2, c2) =
-  Ident.same id1 id2 && same c1 c2 && sametype t1 t2
-
-and sameswitch sw1 sw2 =
-  let samecase (n1, a1) (n2, a2) = n1 = n2 && same a1 a2 in
-  sw1.sw_numconsts = sw2.sw_numconsts &&
-  sw1.sw_numblocks = sw2.sw_numblocks &&
-  samelist samecase sw1.sw_consts sw2.sw_consts &&
-  samelist samecase sw1.sw_blocks sw2.sw_blocks &&
-  (match (sw1.sw_failaction, sw2.sw_failaction) with
-    | (None, None) -> true
-    | (Some a1, Some a2) -> same a1 a2
-    | _ -> false)
-
-and sametype t1 t2 = match t1,t2 with
-  | Lt_top, Lt_top -> true
-  | Lt_arrow (a,b), Lt_arrow (a',b') -> sametype a a' && sametype b b'
-  | Lt_const c, Lt_const c' -> sametconst c c'
-  | Lt_block b, Lt_block b' ->
-      samelist (=) b.consts b'.consts &&
-      samelist (fun (i,ts) (i',ts') -> i = i' && samelist sametype ts ts')
-               b.blocks b'.blocks
-  | Lt_var v, Lt_var v' -> Ident.same v v'
-  | Lt_mu (id,t), Lt_mu (id',t') -> Ident.same id id' && sametype t t'
-  | Lt_forall (id,t), Lt_forall (id',t') -> Ident.same id id' && sametype t t'
-  | _, _ -> false
-
-and sametconst c1 c2 = match c1,c2 with
-  | Lt_const_int      , Lt_const_int      
-  | Lt_const_char     , Lt_const_char
-  | Lt_const_string   , Lt_const_string
-  | Lt_const_float    , Lt_const_float
-  | Lt_const_int32    , Lt_const_int32
-  | Lt_const_int64    , Lt_const_int64
-  | Lt_const_nativeint, Lt_const_nativeint -> true
-  | _ -> false
 
 let name_lambda arg fn =
   match arg with
     Lvar id -> fn id
   | _ -> let id = Ident.create "let" in Llet(Strict, id, arg, fn id)
 
-(* FIXME: Lt_bot? *)
 let name_lambda_list args fn =
   let rec name_list names = function
     [] -> fn (List.rev names)
@@ -326,6 +271,9 @@ let name_lambda_list args fn =
       let id = Ident.create "let" in
       Llet(Strict, id, arg, name_list (Lvar id :: names) rem) in
   name_list [] args
+
+
+(** {1 Iterate through lambda} *)
 
 let iter f = function
     Lvar _
@@ -338,10 +286,10 @@ let iter f = function
       f arg; f body
   | Lletrec(decl, body) ->
       f body;
-      List.iter (fun (id, t, exp) -> f exp) decl
+      List.iter (fun (bind, exp) -> f exp) decl
   | Lprim(p, args) ->
       List.iter f args
-  | Lswitch(id, sw) ->
+  | Lswitch(id, sw, t) ->
       f (Lvar id);
       List.iter (fun (key, case) -> f case) sw.sw_consts;
       List.iter (fun (key, case) -> f case) sw.sw_blocks;
@@ -372,10 +320,13 @@ let iter f = function
   | Lifused (v, e) ->
       f e
   | Ltypeabs (_, l)
-  | Ltypeapp (l, _) -> f l
+  | Ltypeapp (l, _)
+  | Lascribe (l, _)  -> f l
+
+(** {1 Extract free identifiers / variables} *)
 
 module IdentSet =
-  Set.Make(struct
+  Set.Make (struct
     type t = Ident.t
     let compare = compare
   end)
@@ -391,16 +342,16 @@ let free_ids get l =
     | Llet(str, id, arg, body) ->
         fv := IdentSet.remove id !fv
     | Lletrec(decl, body) ->
-        List.iter (fun (id, t, exp) -> fv := IdentSet.remove id !fv) decl
+        List.iter (fun ((id, t), exp) -> fv := IdentSet.remove id !fv) decl
     | Lstaticcatch(e1, (_,vars), e2) ->
-        List.iter (fun id -> fv := IdentSet.remove id !fv) vars
+        List.iter (fun (id,ty) -> fv := IdentSet.remove id !fv) vars
     | Ltrywith(e1, exn, e2) ->
         fv := IdentSet.remove exn !fv
     | Lfor(v, e1, e2, dir, e3) ->
         fv := IdentSet.remove v !fv
     | Lassign(id, e) ->
         fv := IdentSet.add id !fv
-    | Ltypeapp _ | Ltypeabs _
+    | Ltypeapp _ | Ltypeabs _ | Lascribe _
     | Lvar _ | Lconst _ | Lapply _
     | Lprim _ | Lswitch _ | Lstaticraise _
     | Lifthenelse _ | Lsequence _ | Lwhile _
@@ -413,6 +364,8 @@ let free_variables l =
 let free_methods l =
   free_ids (function Lsend(Self, Lvar meth, obj, _, _) -> [meth] | _ -> []) l
 
+(** {1 For static failures} *)
+
 (* Check if an action has a "when" guard *)
 let raise_count = ref 0
 
@@ -424,7 +377,7 @@ let next_raise_count () =
 let staticfail = Lstaticraise (0,[])
 
 let rec is_guarded = function
-  | Lifthenelse( cond, body, Lstaticraise (0,[])) -> true
+  | Lifthenelse(cond, body, Lstaticraise (0,[])) -> true
   | Llet(str, id, lam, body) -> is_guarded body
   | Levent(lam, ev) -> is_guarded lam
   | _ -> false
@@ -438,9 +391,8 @@ let rec patch_guarded patch = function
       Levent (patch_guarded patch lam, ev)
   | _ -> fatal_error "Lambda.patch_guarded"
 
-(* Translate an access path *)
+(** {1 Translate an access path} *)
 
-(** FIXME: Lift typing information *)
 let rec transl_path = function
     Pident id ->
       if Ident.global id then Lprim(Pgetglobal id, []) else Lvar id
@@ -449,13 +401,132 @@ let rec transl_path = function
   | Papply(p1, p2) ->
       fatal_error "Lambda.transl_path"
 
-(* Compile a sequence of expressions *)
+(** {1 Compile a sequence of expressions} *)
 
 let rec make_sequence fn = function
     [] -> lambda_unit
   | [x] -> fn x
   | x::rem ->
       let lam = fn x in Lsequence(lam, make_sequence fn rem)
+
+(** {1 To let-bind expressions to variables *)
+
+let bind str var exp body =
+  match exp with
+    Lvar var' when Ident.same var var' -> body
+  | _ -> Llet(str, var, exp, body)
+
+(** {1 Working with comparison *)
+
+let commute_comparison = function
+  | Ceq -> Ceq | Cneq -> Cneq
+  | Clt -> Cgt | Cle -> Cge
+  | Cgt -> Clt | Cge -> Cle
+
+let negate_comparison = function
+  | Ceq -> Cneq | Cneq -> Ceq
+  | Clt -> Cge  | Cle -> Cgt
+  | Cgt -> Cle  | Cge -> Clt
+
+(* ************************************************* *)
+(** {0 Syntactic equality on types and expressions} **)
+(* ************************************************* *)
+
+let samepair f1 f2 (a1,a2) (b1,b2) =
+  f1 a1 b1 && f2 a2 b2
+
+let rec same l1 l2 =
+  match (l1, l2) with
+  | Lvar v1, Lvar v2 ->
+      Ident.same v1 v2
+  | Lconst c1, Lconst c2 ->
+      c1 = c2
+  | Lapply(a1, bl1, _), Lapply(a2, bl2, _) ->
+      same a1 a2 && samelist same bl1 bl2
+  | Lfunction(k1, idl1, a1), Lfunction(k2, idl2, a2) ->
+      k1 = k2 && samelist (fun (i1,t1) (i2,t2) -> Ident.same i1 i2) idl1 idl2 && same a1 a2
+  | Llet(k1, id1, a1, b1), Llet(k2, id2, a2, b2) ->
+      k1 = k2 && Ident.same id1 id2 && same a1 a2 && same b1 b2
+  | Lletrec (bl1, a1), Lletrec (bl2, a2) ->
+      samelist (samepair samebinding same) bl1 bl2 && same a1 a2
+  | Lprim(p1, al1), Lprim(p2, al2) ->
+      p1 = p2 && samelist same al1 al2
+  | Lswitch(a1, s1, t1), Lswitch(a2, s2, t2) ->
+      Ident.same a1 a2 && sameswitch s1 s2 && sametype t1 t2
+  | Lstaticraise(n1, al1), Lstaticraise(n2, al2) ->
+      n1 = n2 && samelist same al1 al2
+  | Lstaticcatch(a1, (n1, bindl1), b1), Lstaticcatch(a2, (n2, bindl2), b2) ->
+      same a1 a2 && n1 = n2 && samelist samebinding bindl1 bindl2 && same b1 b2
+  | Ltrywith(a1, id1, b1), Ltrywith(a2, id2, b2) ->
+      same a1 a2 && Ident.same id1 id2 && same b1 b2
+  | Lifthenelse(a1, b1, c1), Lifthenelse(a2, b2, c2) ->
+      same a1 a2 && same b1 b2 && same c1 c2
+  | Lsequence(a1, b1), Lsequence(a2, b2) ->
+      same a1 a2 && same b1 b2
+  | Lwhile(a1, b1), Lwhile(a2, b2) ->
+      same a1 a2 && same b1 b2
+  | Lfor(id1, a1, b1, df1, c1), Lfor(id2, a2, b2, df2, c2) ->
+      Ident.same id1 id2 &&  same a1 a2 &&
+      same b1 b2 && df1 = df2 && same c1 c2
+  | Lassign(id1, a1), Lassign(id2, a2) ->
+      Ident.same id1 id2 && same a1 a2
+  | Lsend(k1, a1, b1, cl1, _), Lsend(k2, a2, b2, cl2, _) ->
+      k1 = k2 && same a1 a2 && same b1 b2 && samelist same cl1 cl2
+  | Levent(a1, ev1), Levent(a2, ev2) ->
+      same a1 a2 && ev1.lev_loc = ev2.lev_loc
+  | Lifused(id1, a1), Lifused(id2, a2) ->
+      Ident.same id1 id2 && same a1 a2
+  | Ltypeapp (l1,t1), Ltypeapp (l2,t2) ->
+      same l1 l2 && samelist sametype t1 t2
+  | Ltypeabs (ids1,l1), Ltypeabs (ids2,l2) ->
+      samelist Ident.same ids1 ids2 && same l1 l2
+  | Lascribe (l1,t1), Lascribe (l2,t2) ->
+      same l1 l2 && sametype t1 t2
+  | _, _ ->
+      false
+
+and sameswitch sw1 sw2 =
+  let samecase (n1, a1) (n2, a2) = n1 = n2 && same a1 a2 in
+  sw1.sw_numconsts = sw2.sw_numconsts &&
+  sw1.sw_numblocks = sw2.sw_numblocks &&
+  samelist samecase sw1.sw_consts sw2.sw_consts &&
+  samelist samecase sw1.sw_blocks sw2.sw_blocks &&
+  (match (sw1.sw_failaction, sw2.sw_failaction) with
+    | (None, None) -> true
+    | (Some a1, Some a2) -> same a1 a2
+    | _ -> false)
+
+and sametype t1 t2 = match t1,t2 with
+  | Lt_top, Lt_top -> true
+  | Lt_arrow (a,b), Lt_arrow (a',b') -> sametype a a' && sametype b b'
+  | Lt_const c, Lt_const c' -> sametconst c c'
+  | Lt_array t, Lt_array t' -> sametype t t'
+  | Lt_block b, Lt_block b' ->
+      samelist (=) b.lt_consts b'.lt_consts &&
+      samelist (fun (i,ts) (i',ts') -> i = i' && samelist sametype ts ts')
+               b.lt_blocks b'.lt_blocks
+  | Lt_var v, Lt_var v' -> Ident.same v v'
+  | Lt_mu (id,t), Lt_mu (id',t') -> Ident.same id id' && sametype t t'
+  | Lt_forall (id,t), Lt_forall (id',t') -> samelist Ident.same id id' && sametype t t'
+  | _, _ -> false
+
+and sametconst c1 c2 = match c1,c2 with
+  | Lt_const_int      , Lt_const_int      
+  | Lt_const_char     , Lt_const_char
+  | Lt_const_string   , Lt_const_string
+  | Lt_const_float    , Lt_const_float
+  | Lt_const_int32    , Lt_const_int32
+  | Lt_const_int64    , Lt_const_int64
+  | Lt_const_nativeint, Lt_const_nativeint -> true
+  | _ -> false
+
+and samebinding b1 b2 = samepair Ident.same sametype b1 b2
+
+let same_type = sametype
+
+(* *************************************************** *)
+(** {0 Variable substitution on expression and types} **)
+(* *************************************************** *)
 
 (* Apply a substitution to a lambda-term.
    Assumes that the bound variables of the lambda-term do not
@@ -473,14 +544,14 @@ let subst_lambda s lam =
   | Llet(str, id, arg, body) -> Llet(str, id, subst arg, subst body)
   | Lletrec(decl, body) -> Lletrec(List.map subst_decl decl, subst body)
   | Lprim(p, args) -> Lprim(p, List.map subst args)
-  | Lswitch(id, sw) ->
+  | Lswitch(id, sw, ty) ->
       Lswitch(id,
               {sw with sw_consts = List.map subst_case sw.sw_consts;
                        sw_blocks = List.map subst_case sw.sw_blocks;
                        sw_failaction =
                          match sw.sw_failaction with
                          | None -> None
-                         | Some l -> Some (subst l)})
+                         | Some l -> Some (subst l)}, ty)
 
   | Lstaticraise (i,args) ->  Lstaticraise (i, List.map subst args)
   | Lstaticcatch(e1, io, e2) -> Lstaticcatch(subst e1, io, subst e2)
@@ -496,60 +567,165 @@ let subst_lambda s lam =
   | Lifused (v, e) -> Lifused (v, subst e)
   | Ltypeabs (id, l) -> Ltypeabs (id, subst l)
   | Ltypeapp (l, t) -> Ltypeapp (subst l, t)
-  and subst_decl (id, t, exp) = (id, t, subst exp)
+  | Lascribe (l, t) -> Lascribe (subst l, t)
+  and subst_decl (binding, exp) = (binding, subst exp)
   and subst_case (key, case) = (key, subst case)
   in subst lam
 
 let subst_type s ty =
+  let assert_unbound id =
+    try
+      ignore (Ident.find_same id s);
+      error (Tvar_capture id)
+    with Not_found -> ()
+  in
   let rec subst = function
     | Lt_var id as t ->
       begin try Ident.find_same id s with Not_found -> t end
     | Lt_top | Lt_const _ as t -> t
     | Lt_arrow (t1,t2) -> Lt_arrow (subst t1, subst t2)
     | Lt_block b ->
-      Lt_block { b with blocks = List.map subst_block b.blocks }
+      Lt_block { b with lt_blocks = List.map subst_block b.lt_blocks }
     | Lt_mu (id,t) ->
-      begin try
-          ignore (Ident.find_same id s);
-          error (Tvar_capture id)
-        with Not_found ->
-          Lt_mu (id, subst t)
-      end
+      assert_unbound id;
+      Lt_mu (id, subst t)
     | Lt_array t -> Lt_array (subst t)
-    | Lt_forall (id,t) ->
-      begin try
-          ignore (Ident.find_same id s);
-          error (Tvar_capture id)
-        with Not_found ->
-          Lt_forall (id, subst t)
-      end
-      and subst_block (tag,ts) = tag, List.map subst ts
+    | Lt_forall (ids,t) ->
+      List.iter assert_unbound ids;
+      Lt_forall (ids, subst t)
+  and subst_block (tag,ts) = tag, List.map subst ts
   in
   subst ty
 
+(* ************************ *)
+(** {0 Subtyping relation} **)
+(* ************************ *)
 
-(* To let-bind expressions to variables *)
+type context = {
+  ctx_vars     : lambda_type Ident.tbl;
+  ctx_catchers : (int * lambda_type list) list;
+} 
 
-let bind str var exp body =
-  match exp with
-    Lvar var' when Ident.same var var' -> body
-  | _ -> Llet(str, var, exp, body)
+let context_empty = { ctx_vars = Ident.empty ; ctx_catchers = [] }
 
-and commute_comparison = function
-  | Ceq -> Ceq| Cneq -> Cneq
-  | Clt -> Cgt | Cle -> Cge
-  | Cgt -> Clt | Cge -> Cle
+let bind_var id tyarg ctx =
+  { ctx with ctx_vars = Ident.add id tyarg ctx.ctx_vars }
+let bind_vars vars ctx =
+  List.fold_left (fun ctx (id,t) -> bind_var id t ctx) ctx vars
+let bind_catcher tag types ctx =
+  { ctx with ctx_catchers = (tag,types) :: ctx.ctx_catchers }
 
-and negate_comparison = function
-  | Ceq -> Cneq| Cneq -> Ceq
-  | Clt -> Cge | Cle -> Cgt
-  | Cgt -> Cle | Cge -> Clt
+module AssumSet = Set.Make(struct type t = Ident.t * lambda_type let compare = compare end)
+type assumptions = {
+  as_fv : IdentSet.t;
+  as_l  : AssumSet.t; 
+  as_r  : AssumSet.t;
+}
 
-(* Type-check lambda expression *)
-type context = { vars : lambda_type Ident.tbl }
+let assuming_l id t { as_l } = AssumSet.mem (id,t) as_l
+let assuming_r t id { as_r } = AssumSet.mem (id,t) as_r
+let is_freevar id   { as_fv } = IdentSet.mem id as_fv
 
-let bind_var ctx (id,tyarg) =
-  { (*ctx with*) vars = Ident.add id tyarg ctx.vars }
+let assum_empty = {
+  as_fv = IdentSet.empty;
+  as_l  = AssumSet.empty;
+  as_r  = AssumSet.empty;
+}
+
+let assum_l id t assum = { assum with as_l = AssumSet.add (id,t) assum.as_l }
+let assum_r t id assum = { assum with as_r = AssumSet.add (id,t) assum.as_r }
+
+let rec assert_subtype assum ctx t1 t2 = match t1,t2 with
+  | _, Lt_top -> ()
+
+  | Lt_var v1, Lt_var v2 when Ident.same v1 v2
+                           && is_freevar v1 assum ->
+    ()
+
+  | Lt_var v, t when assuming_l v t assum -> ()
+  | t, Lt_var v when assuming_r t v assum -> ()
+  | Lt_var id, t2 when not (is_freevar id assum) ->
+    begin match 
+      try Some (Ident.find_same id ctx.ctx_vars)
+      with Not_found -> None
+    with
+    | None -> error (Unbound_tvar id)
+    | Some t1 -> assert_subtype (assum_l id t2 assum) ctx t1 t2
+    end
+  | t1, Lt_var id when not (is_freevar id assum) ->
+    begin match 
+      try Some (Ident.find_same id ctx.ctx_vars)
+      with Not_found -> None
+    with
+    | None -> error (Unbound_tvar id)
+    | Some t2 -> assert_subtype (assum_r t1 id assum) ctx t1 t2
+    end
+
+  | t1, Lt_mu (id,t2) -> 
+    assert_subtype assum (bind_var id t2 ctx) t1 t2
+  | Lt_mu (id,t1), t2 -> 
+    assert_subtype assum (bind_var id t1 ctx) t1 t2
+
+  | Lt_arrow (a1,a2), Lt_arrow (b1,b2) ->
+    assert_subtype assum ctx b1 a1;
+    assert_subtype assum ctx a2 b2
+
+  | Lt_block v1, Lt_block v2 ->
+    assert_subblock assum ctx t1 v1 t2 v2
+
+  | Lt_const c1, Lt_const c2 when sametconst c1 c2 ->  ()
+
+  | Lt_array t1, Lt_array t2 ->
+    (* Array are invariant, …slow implementation *)
+    assert_subtype assum ctx t1 t2;
+    assert_subtype assum ctx t2 t1
+
+  | Lt_forall (idl1,t1), Lt_forall (idl2,t2)
+    when List.length idl1 = List.length idl2 ->
+    let as_fv, ctx = List.fold_left2
+      (fun (fv,ctx) id1 id2 ->
+        let id' = Ident.rename id1 in
+        IdentSet.add id' fv,
+        bind_var id1 (Lt_var id') (bind_var id2 (Lt_var id') ctx))
+      (assum.as_fv, ctx) idl1 idl2
+    in
+    assert_subtype {assum with as_fv} ctx t1 t2
+
+  | Lt_top, _ 
+  | (Lt_var _ | Lt_const _ | Lt_forall _ | Lt_block _ | Lt_arrow _ | Lt_array _),
+    (Lt_var _ | Lt_const _ | Lt_forall _ | Lt_block _ | Lt_arrow _ | Lt_array _) ->
+      error (Not_subtype (t1,t2))
+
+and assert_subblock assum ctx t1 v1 t2 v2 =
+  if is_top_block v2
+  then ()
+  else if is_top_block v1
+  then error (Not_subtype (t1,t2))
+  else
+  let subconst l1 l2 = 
+    List.for_all (fun tag -> List.exists ((=) tag) l2) l1
+  in
+  let subblock b1 b2 =
+    List.iter (fun (tag,values) ->
+      let tag',values' = List.find (fun (tag',_) -> tag = tag') b2 in
+      List.iter2 (assert_subtype assum ctx) values values'
+    ) b1
+  in
+  try
+    if not (subconst v1.lt_consts v2.lt_consts) then raise Not_found;
+    subblock v1.lt_blocks v2.lt_blocks
+  with Not_found | Invalid_argument "List.iter2" ->
+    error (Not_subtype (t1,t2))
+
+let assert_subtype = assert_subtype assum_empty
+
+let subtype ctx t1 t2 =
+  try assert_subtype ctx t1 t2; true
+  with _ -> false
+
+(* ************************************* *)
+(** {0 Type-checking lambda expression} **)
+(* ************************************* *)
 
 let typeof_const = function
   | Const_int    _ -> Lt_const_int
@@ -564,70 +740,102 @@ let rec typeof_sconst = function
   | Const_base        c -> Lt_const (typeof_const c)
   | Const_pointer     i -> lt_pointer i
   | Const_block       (i,scs) -> 
-    Lt_block { blocks = [i, List.map typeof_sconst scs] ; consts = [] }
+    Lt_block { lt_blocks = [i, List.map typeof_sconst scs] ; lt_consts = [] }
   | Const_float_array _ -> Lt_array (Lt_const Lt_const_float)
   | Const_immstring _ -> (Lt_const Lt_const_string)
 
-(* TODO: Replace sametype by appropriate subtyping relation *)
 
-let typeof_prim ctx prim targs = match prim, targs with
-  | Pidentity, [t] ->
-    let tX = Ident.create "X" in
-    Lt_forall (tX, Lt_arrow (Lt_var tX, Lt_var tX))
-  | Pignore ->
-    let tX = Ident.create "X" in
-    Lt_forall (tX, Lt_arrow (Lt_var tX, lt_unit))
-  | Prevapply _ ->
-    let tA, tB = Ident.create "A", Ident.create "B" in
-    Lt_forall (tA, Lt_forall (tB,
-        Lt_arrow (Lt_var tA,
-          Lt_arrow (Lt_arrow (Lt_var tA, Lt_var tB),
-                    Lt_var tB))))
-  | Pdirapply _ ->
-    let tA, tB = Ident.create "A", Ident.create "B" in
-    Lt_forall (tA, Lt_forall (tB,
-        Lt_arrow (Lt_arrow (Lt_var tA, Lt_var tB),
-          Lt_arrow (Lt_var tA,
-                    Lt_var tB))))
+let rec typeof_prim ctx prim targs = match prim, targs with
+  | Pidentity, [t] -> lt_bot
+  | Pignore, [t] -> lt_unit
+  | Prevapply _, [targ;Lt_arrow (targ',tres)] 
+  | Pdirapply _, [Lt_arrow (targ',tres);targ] ->
+    assert_subtype ctx targ targ';
+    tres
   (* Globals *)
-  | Pgetglobal i ->
-      (try Ident.find_same i ctx.vars
+  | Pgetglobal i, [] ->
+    (try Ident.find_same i ctx.ctx_vars
        with Not_found -> error (Fail "Unbound global"))
-  | Psetglobal i ->
+  | Psetglobal i, [targ] ->
     let ty = 
-      try Ident.find_same i ctx.vars
+      try Ident.find_same i ctx.ctx_vars
       with Not_found -> error (Fail "Unbound global")
     in
-    Lt_arrow (ty, lt_unit)
+    assert_subtype ctx targ ty;
+    lt_unit
   (* Operations on heap blocks *)
-  | Pmakeblock     (size,_) ->
-    let rec aux acc = function
-      | i when i < size ->
-        aux (Ident.create ("F" ^ string_of_int i) :: acc) (succ i)
-      | _ -> acc
+  | Pmakeblock (tag,_), targs ->
+    Lt_block { lt_blocks = [tag, targs] ; lt_consts = [] }
+  | Pfield i, [Lt_block { lt_blocks = [_,fields] ; lt_consts = []}] ->
+    (try List.nth fields i 
+     with Failure _ -> error (Fail "invalid field primitive"))
+  | Psetfield (i,_), [Lt_block { lt_blocks = [_,fields] ; lt_consts = []};tval] ->
+    let tfield =
+      try List.nth fields i 
+      with Failure _ -> error (Fail "invalid field primitive")
     in
-    let rev_idents = aux [] size in
-    let tres = Lt_block { blocks =
-  | Pfield         of int
-  | Psetfield      of int * bool
-  | Pfloatfield    of int
-  | Psetfloatfield of int
-  | Pduprecord     of Types.record_representation * int
+    assert_subtype ctx tval tfield;
+    lt_unit
+  | (Pfield _, [_] | Psetfield _, [_;_]) ->
+    error (Fail "invalid field primitive")
+
+  | Pfloatfield i, [Lt_block { lt_blocks = [_,fields] ; lt_consts = []}] ->
+    let t = List.nth fields i in
+    assert_subtype ctx lt_const_float t;
+    t
+  | Psetfloatfield i, [Lt_block { lt_blocks = [_,fields] ; lt_consts = []};tval] ->
+    let t =
+      try List.nth fields i 
+      with Failure _ -> error (Fail "invalid field primitive")
+    in
+    assert_subtype ctx t lt_const_float;
+    lt_unit
+  | (Pfloatfield _, [_] | Psetfloatfield _, [_;_]) ->
+    error (Fail "invalid field primitive")
+
+  | Pduprecord (Types.Record_regular,size), 
+    [Lt_block { lt_blocks = [_,fields] ; lt_consts = [] } as ty] 
+    when List.length fields = size ->
+    ty
+  | Pduprecord (Types.Record_float,size), 
+    [Lt_block { lt_blocks = [_,fields] ; lt_consts = [] } as ty] 
+    when List.length fields = size
+      && List.for_all (subtype ctx lt_const_float) fields ->
+    ty
+
   (* Force lazy values *)
-  | Plazyforce
+  | Plazyforce, _ ->
+    failwith "FIXME"
+
   (* External call *)
-  | Pccall of Primitive.description
+  | Pccall prim, targs when prim.Primitive.prim_arity = List.length targs ->
+    lt_bot
+    
   (* Exceptions *)
-  | Praise
+  | Praise, [e] ->
+    lt_bot
+ 
   (* Boolean operations *)
-  | Psequand | Psequor | Pnot
+  | (Psequand | Psequor), [a;b]
+    when subtype ctx a lt_bool && subtype ctx b lt_bool ->
+    lt_bool
+  | Pnot, [a] when subtype ctx a lt_bool ->
+    lt_bool
+
   (* Integer operations *)
-  | Pnegint | Paddint | Psubint | Pmulint | Pdivint | Pmodint
-  | Pandint | Porint  | Pxorint
-  | Plslint | Plsrint | Pasrint
-  | Pintcomp of comparison
-  | Poffsetint of int
-  | Poffsetref of int
+  | (Paddint | Psubint | Pmulint | Pdivint | Pmodint |
+     Pandint | Porint  | Pxorint | Plslint | Plsrint | Pasrint),
+    [a;b] when subtype ctx a lt_const_int  
+            && subtype ctx b lt_const_int ->
+    lt_const_int
+  | Pnegint, [a] when subtype ctx a lt_const_int ->
+    lt_const_int
+  | Pintcomp _, [a] when subtype ctx a lt_const_int ->
+    lt_bool
+  | _ -> failwith "TODO: unhandled primitive"
+
+  (*| Poffsetint i -> failwith "TODO"
+  | Poffsetref i -> failwith "TODO"
   (* Float operations *)
   | Pintoffloat | Pfloatofint
   | Pnegfloat | Pabsfloat
@@ -667,190 +875,162 @@ let typeof_prim ctx prim targs = match prim, targs with
   | Pbintcomp  of boxed_integer * comparison
   (* Operations on big arrays: (unsafe, #dimensions, kind, layout) *)
   | Pbigarrayref of bool * int * bigarray_kind * bigarray_layout
-  | Pbigarrayset of bool * int * bigarray_kind * bigarray_layout
+  | Pbigarrayset of bool * int * bigarray_kind * bigarray_layout *)
 
-let rec typeof ctx = function
+and typeof ctx = function
   | Lvar v -> 
-    (try Ident.find_same v ctx.vars
+    (try Ident.find_same v ctx.ctx_vars
      with Not_found -> error (Unbound_var v))
-  | Lconst c -> typeof_const c
+  | Lconst c -> typeof_sconst c
   | Lapply (lfun,args,_) ->
     let tfun = typeof ctx lfun in
     let tapp ty arg =
       let targ = typeof ctx arg in
       match ty with
-      | Lt_arrow (targ',tres) when sametype targ targ' ->
+      | Lt_arrow (targ',tres) ->
+        assert_subtype ctx targ targ';
         tres
-      | Lt_arrow _ -> error (Fail "invalid argument type")
       | _ -> error (Fail "expecting function")
     in
     List.fold_left tapp tfun args
   | Lfunction (Curried,args,body) ->
-    let ctx' = List.fold_left bind_var ctx args in
-    let tbody = typeof ctx' body in
+    let tbody = typeof (bind_vars args ctx) body in
     List.fold_right (fun (_,targ) tres -> Lt_arrow (targ,tres))
       args tbody
   | Lfunction (Tupled,args,body) ->
-    let ctx' = List.fold_left bind_var ctx args in
-    let tbody = typeof ctx' body in
+    let tbody = typeof (bind_vars args ctx) body in
     let targs = List.map snd args in
-    Lt_arrow (Lt_block { consts = [] ; block = [0,targs] }, tbody)
+    Lt_arrow (Lt_block { lt_consts = [] ; lt_blocks = [0,targs] }, tbody)
   | Llet (_,id,expr,body) ->
     let texpr = typeof ctx expr in
-    typeof body (bind_var ctx (id,texpr))
+    typeof (bind_var id texpr ctx) body 
   | Lletrec (bindings, body) ->
-    let ctx' = List.fold_left 
-        (fun ctx (id,ty,_) -> bind_var ctx (id,ty))
-        ctx bindings
-    in
-    let validate (id,ty,expr) =
+    let ctx' = bind_vars (List.map fst bindings) ctx in
+    let validate ((id,ty),expr) =
       let ty' = typeof ctx' expr in
-      if not sametype ty ty'
-      then error (Fail "type error in letrec") 
+      assert_subtype ctx ty' ty
     in
     List.iter validate bindings;
     typeof ctx' body 
-  | Lprim of primitive * lambda list
-  | Lswitch of Ident.t * lambda_switch
-  | Lstaticraise of int * lambda list
-  | Lstaticcatch of lambda * (int * Ident.t list) * lambda
-  | Ltrywith of lambda * Ident.t * lambda
-  | Lifthenelse of lambda * lambda * lambda
-  | Lsequence of lambda * lambda
-  | Lwhile of lambda * lambda
-  | Lfor of Ident.t * lambda * lambda * direction_flag * lambda
-  | Lassign of Ident.t * lambda
-  | Lsend of meth_kind * lambda * lambda * lambda list * Location.t
-  | Levent of lambda * lambda_event
-  | Lifused of Ident.t * lambda
-  | Ltypeabs of Ident.t list * lambda
-  | Ltypeapp of lambda * lambda_type
-
-
-(*module AssumSet = Set.Make(struct type t = Ident.t * lambda_type let compare = compare end)
-type assumptions = AssumSet.t * AssumSet.t
-
-type env = {
-  vars : lambda_type_env;
-  types : lambda_type_env;
-  assum : assumptions;
-}
-
-let find_var id env =
-  try Ident.find_same id env
-  with Not_found -> error (Unbound_var id)
-
-let assuming_l id t assum = AssumSet.mem (id,t) (fst assum)
-let assuming_r t id assum = AssumSet.mem (id,t) (snd assum)
-
-let assum_empty = AssumSet.empty, AssumSet.empty
-let assum_l id t assum = (AssumSet.add (id,t) (fst assum), snd assum)
-let assum_r t id assum = (fst assum, AssumSet.add (id,t) (snd assum))
-
-let rec assert_subtype assum tenv t1 t2 = match t1,t2 with
-  | _, Lt_top -> ()
-
-  | Lt_var id, t when assuming_l id t assum -> ()
-  | t, Lt_var id when assuming_r t id assum -> ()
-  | Lt_var id, t2 ->
-    begin match 
-      try Some (Ident.find_same id tenv)
-      with Not_found -> None
+  | Lprim (p, args) -> 
+    let targs = List.map (typeof ctx) args in
+    typeof_prim ctx p targs
+  | Lswitch (v, sw, ty) ->
+    begin match
+      try Ident.find_same v ctx.ctx_vars
+      with Not_found -> error (Unbound_var v)
     with
-      | None -> error (Unbound_tvar id)
-      | Some t1 -> assert_subtype (assum_l id t2 assum) tenv t1 t2
-    end
-  | t1, Lt_var id ->
-    begin match 
-      try Some (Ident.find_same id tenv)
-      with Not_found -> None
-    with
-      | None -> error (Unbound_tvar id)
-      | Some t2 -> assert_subtype (assum_r t1 id assum) tenv t1 t2
-    end
-
-  | t1, Lt_mu (id,t2) -> 
-    let tenv = Ident.add id t2 tenv in
-    assert_subtype assum tenv t1 t2
-  | Lt_mu (id,t1), t2 -> 
-    let tenv = Ident.add id t1 tenv in
-    assert_subtype assum tenv t1 t2
-
-  | Lt_arrow (a1,a2), Lt_arrow (b1,b2) ->
-      assert_subtype assum tenv b1 a1;
-      assert_subtype assum tenv a2 b2
-
-  | Lt_block v1, Lt_block v2 ->
-      assert_subvalue assum tenv t1 v1 t2 v2
-
-  | Lt_const c1, Lt_const c2 when sametconst c1 c2 ->  ()
-
-  | Lt_top, _ | (Lt_block _ | Lt_arrow _), (Lt_block _ | Lt_arrow _) ->
-      error (Not_subtype (t1,t2))
-
-and assert_subvalue assum tenv t1 v1 t2 v2 =
-  let subconst l1 l2 = 
-    List.for_all (fun tag -> List.exists ((=) tag) l2) l1
-  in
-  let subblock b1 b2 =
-    List.iter (fun (tag,values) ->
-      let tag',values' = List.find (fun (tag',_) -> tag = tag') b2 in
-      List.iter2 (assert_subtype assum tenv) values values'
-    ) b1
-  in
-  try
-    if not (subconst v1.consts v2.consts) then raise Not_found;
-    subblock v1.blocks v2.blocks
-  with Not_found | Invalid_argument "List.iter2" ->
-    error (Not_subtype (t1,t2)) *)
-
-(*let lt_app tenv tfn targ = match tfn with
-  | Lt_arrow (arg,result) -> assert_subtype assum_empty tenv targ arg; result
-  | _ -> error (Cant_apply (tfn,targ))
-
-let rec lt_check ~tenv ~env = function
-  | Lvar id ->
-      (try Ident.find_same id env
-       with Not_found -> error (Unbound_var id))
-  | Lconst const -> Lt_top (*FIXME*)
-  | Lapply (fn,args,loc) ->
-      let targs = List.map (lt_check ~tenv ~env) args in
-      let tfn = lt_check ~tenv ~env fn in
-      List.fold_left (lt_app tenv) tfn targs
-
-  | Lfunction (kind(*TODO*),args,body) -> 
-      let env = List.fold_left
-        (fun env (id,ty) -> Ident.add id ty env)
-        env
-        args
+    | Lt_block texpr ->
+      let get a i =
+        try a.(i) with Invalid_argument _ ->
+          error (Fail "out-of-bound tag in switch")
+      and set a i v =
+        try a.(i) <- v
+        with Invalid_argument _ ->
+          error (Fail "out-of-bound tag in switch")
       in
-      let tresult = lt_check ~tenv ~env body in
-      List.fold_right
-        (fun (id,targ) tres -> Lt_arrow (targ,tres))
-        args
-        tresult
+      let refine_block tag =
+        try Lt_block {
+            lt_blocks = [tag, List.assoc tag texpr.lt_blocks];
+            lt_consts = [] }
+        with Not_found ->
+          error (Fail "unexpected tag")
+      and refine_const tag =
+        assert (List.exists ((=) tag) texpr.lt_consts);
+        Lt_block { lt_blocks = [] ; lt_consts = [tag] }
+      in
+      let br_blocks, br_consts =
+        Array.make sw.sw_numblocks None,
+        Array.make sw.sw_numconsts None
+      in 
+      let process_branch refine tystore (tag,body) =
+        (* FIXME: Check out of bounds access *)
+        set tystore tag (Some (typeof (bind_var v (refine tag) ctx) body))
+      in
+      (* Type each branch in refined context *)
+      List.iter (process_branch refine_block br_blocks) sw.sw_blocks;
+      List.iter (process_branch refine_const br_consts) sw.sw_consts;
+      (* Check all cases are covered *)
+      if sw.sw_failaction = None &&
+        (List.exists (fun tag -> get br_consts tag = None) texpr.lt_consts ||
+        List.exists (fun (tag,_) -> get br_blocks tag = None) texpr.lt_blocks)
+      then error (Fail "case not handled in switch");
+      (* Check branch types are included in result type *) 
+      let check_type = function
+        | Some ty' -> assert_subtype ctx ty' ty
+        | None -> ()
+      in
+      Array.iter check_type br_blocks;
+      Array.iter check_type br_consts;
+      check_type (Misc.may_map (typeof ctx) sw.sw_failaction);
+      ty
+    | _ -> error (Fail "matching on non-block type")
+    end
 
-  | Llet (kind(*TODO*),id,expr,body) ->
-      let texpr = lt_check ~tenv ~env expr in
-      let env = Ident.add id texpr env in
-      lt_check ~tenv ~env body
+  | Lstaticraise (tag, args) ->
+    let targs = List.map (typeof ctx) args in
+    let texpected =
+      try List.assoc tag ctx.ctx_catchers
+      with Not_found ->
+        error (Fail "unknown tag in staticraise")
+    in
+    List.iter2 (assert_subtype ctx) targs texpected;
+    lt_bot
 
-  | Lprim (prim,args) -> failwith "lol"
+  | Lstaticcatch (expr, (id,bindings), handler) ->
+    let texpr = typeof (bind_catcher id (List.map snd bindings) ctx) expr in
+    let thandler = typeof (bind_vars bindings ctx) handler in
+    assert_subtype ctx thandler texpr;
+    texpr
 
-  | _ -> failwith "TODO"
+  | Ltrywith (expr,id,handler) ->
+    let texpr = typeof ctx expr in
+    let thandler = typeof (bind_var id lt_top_block ctx) handler in
+    assert_subtype ctx thandler texpr;
+    texpr
+  | Lifthenelse (lcond,lthen,lelse) ->
+    assert_subtype ctx (typeof ctx lcond) lt_bool;
+    let lt = typeof ctx lthen in
+    assert_subtype ctx (typeof ctx lelse) lt;
+    lt
+  | Lsequence (l1,l2) ->
+    assert_subtype ctx (typeof ctx l1) lt_unit;
+    typeof ctx l2
+  | Lwhile (lcond,lbody) ->
+    assert_subtype ctx (typeof ctx lcond) lt_bool;
+    assert_subtype ctx (typeof ctx lbody) lt_unit;
+    lt_unit
+  | Lfor (id,llo,lhi,_,lbody) ->
+    assert_subtype ctx (typeof ctx llo) lt_const_int;
+    assert_subtype ctx (typeof ctx lhi) lt_const_int;
+    assert_subtype ctx (typeof (bind_var id lt_const_int ctx) lbody) lt_unit;
+    lt_unit
+  | Lassign (var,lval) ->
+    let tvar =
+      try Ident.find_same var ctx.ctx_vars
+      with Not_found -> error (Unbound_var var)
+    and tval = typeof ctx lval
+    in
+    assert_subtype ctx tval tvar;
+    lt_unit
+  | Ltypeabs (ids,lam) ->
+    let vars = List.map Ident.rename ids in
+    let bindings = List.map2 (fun id var -> id, Lt_var var) ids vars in
+    let tlam = typeof (bind_vars bindings ctx) lam in
+    Lt_forall (vars, tlam)
+  | Ltypeapp (lam,tys) ->
+    let tlam = typeof ctx lam in
+    begin match tlam with
+    | Lt_forall (ids,lt) when List.length ids = List.length tys ->
+      let s = List.fold_right2 Ident.add ids tys Ident.empty in
+      subst_type s lt
+    | Lt_forall _ -> error (Fail "type application: incorrect arity")
+    | _ -> error (Fail "type application: expecting forall") 
+    end
+  | Lascribe (l,t) ->
+    let tl = typeof ctx l in
+    assert_subtype ctx tl t;
+    t
+  | Lsend _ | Levent _ | Lifused _ ->
+    failwith "TODO"
 
-  (*
-  | Lletrec (bindings,body) -> 
-  | Lswitch (expr,switch) -> 
-  | Lstaticraise _ -> failwith "TODO"
-  | Lstaticcatch _ -> failwith "TODO"
-  | Ltrywith (body,id,handler) -> 
-  | Lifthenelse (cond,bt,bf) ->
-  | Lsequence (l1,l2) -> 
-  | Lwhile (pred,body) -> 
-  | Lfor (id,l1,l2,d,body) -> 
-  | Lassign (id,lam) ->
-  | Lsend (k,l1,l2,args,loc) -> failwith "TODO"
-  | Levent (lam,lev) -> failwith "TODO"
-  | Lifused (id,lam) -> failwith "TODO"
-  *)*)

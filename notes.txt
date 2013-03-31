@@ -82,7 +82,9 @@ Typing
 
 Typage des primitives : explicite ?
 
-La mutabilité n'est pas traquée
+La mutabilité n'est pas traquée.
+
+Coercion pour les exceptions.
 
 Translation
 -----------

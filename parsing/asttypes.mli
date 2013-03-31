@@ -1,8 +1,6 @@
 (***********************************************************************)
 (*                                                                     *)
-(*                                OCaml                                *)
-(*                                                                     *)
-(*            Xavier Leroy, projet Cristal, INRIA Rocquencourt         *)
+(*                                OCaml                                *) (*                                                                     *) (*            Xavier Leroy, projet Cristal, INRIA Rocquencourt         *)
 (*                                                                     *)
 (*  Copyright 1996 Institut National de Recherche en Informatique et   *)
 (*  en Automatique.  All rights reserved.  This file is distributed    *)
@@ -26,9 +24,6 @@ type constant =
 type rec_flag = Nonrecursive | Recursive | Default
 
 type direction_flag = Upto | Downto
-
-let typeof_prim = function
-  |
 
 type private_flag = Private | Public
 
