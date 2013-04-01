@@ -803,9 +803,24 @@ let rec typeof_prim ctx prim targs = match prim, targs with
       && List.for_all (subtype ctx lt_const_float) fields ->
     ty
 
-  (* Force lazy values *)
-  | Plazyforce, _ ->
-    failwith "FIXME"
+  (* Force lazy values, breaks some assumptions,
+   * may need special type constructor *)
+  | Plazyforce, [targ] ->
+    begin match targ with
+      | Lt_block { lt_blocks = [tag, [Lt_arrow(targ,tres)]] }
+        when tag = Obj.lazy_tag ->
+        assert_subtype ctx targ lt_unit;
+        tres
+      | Lt_block { lt_blocks = [tag, [p0]] }
+        when tag = Obj.forward_tag ->
+        p0
+      | Lt_block { lt_blocks = lst }
+        when List.exists 
+            (fun (t,_) -> Obj.(t = lazy_tag || t = forward_tag))
+            lst ->
+        error (Fail "invalid lazy representation")
+      | targ -> targ
+    end
 
   (* External call *)
   | Pccall prim, targs when prim.Primitive.prim_arity = List.length targs ->

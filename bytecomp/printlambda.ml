@@ -218,7 +218,7 @@ let lam_ty_const = function
   | Lt_const_nativeint -> "nativeint"
 
 let rec lam_ty ppf = function
-  | Lt_top -> fprintf ppf "top"
+  | Lt_top -> fprintf ppf "(top)"
   | Lt_arrow (t1,t2) -> fprintf ppf "(%a -> %a)" lam_ty t1 lam_ty t2
   | Lt_var id -> Ident.print ppf id
   | Lt_const c -> pp_print_string ppf (lam_ty_const c)
@@ -231,9 +231,9 @@ let rec lam_ty ppf = function
   | Lt_block b when is_top_block b -> 
     fprintf ppf "(exn)"
   | Lt_block { Lambda. lt_consts ; lt_blocks }  -> 
-    let print_const ppf tag = fprintf ppf "%da" tag in
+    let print_const ppf tag = fprintf ppf " %da" tag in
     let print_block ppf (tag,tys) =
-      fprintf ppf "(%d:%a)" tag
+      fprintf ppf " (%d:%a)" tag
         (print_list ~first:" " ~delim:" " lam_ty) tys
     in
     fprintf ppf "(block%a%a)"

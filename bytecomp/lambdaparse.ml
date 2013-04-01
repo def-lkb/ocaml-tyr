@@ -1,7 +1,51 @@
 open Lambda
 open Lambdaparser_def
 
-let type_of_tree _ = Lt_top (*FIXME*)
+let type_const_of_string = function
+  | "int"       -> Lt_const_int      
+  | "char"      -> Lt_const_char     
+  | "string"    -> Lt_const_string   
+  | "float"     -> Lt_const_float    
+  | "int32"     -> Lt_const_int32    
+  | "int64"     -> Lt_const_int64    
+  | "nativeint" -> Lt_const_nativeint
+  | _ -> failwith "Unknown type constant"
+
+let rec type_of_tree = function
+  | List (_,[Symbol "top"]) ->
+    Lt_top
+  | List (_,[Symbol "exn"]) ->
+    lt_top_block
+  | List (_,[ta; Symbol "->"; tb]) ->
+    Lt_arrow (type_of_tree ta, type_of_tree tb)
+  | List (_,[Symbol "array"; t]) ->
+    Lt_array (type_of_tree t)
+  | List (_,[Symbol "mu"; Ident v; t]) ->
+    Lt_mu (v, type_of_tree t)
+  | List (_,[Symbol "forall"; List (_,idents); t]) ->
+    let extract_param = function
+      | Ident i -> i
+      | _ -> failwith "Invalid 'forall'"
+    in
+    let idents = List.map extract_param idents in
+    Lt_forall (idents, type_of_tree t)
+  | List (_,Symbol "block" :: tags) ->
+    let rec aux consts blocks = function
+      | [] -> consts, blocks
+      | Const (Const_base (Asttypes.Const_int i)) :: rest ->
+        aux (i :: consts) blocks rest
+      | List (_,(Const (Const_pointer i) :: Colon :: tys)) :: rest ->
+        aux consts ((i, List.map type_of_tree tys) :: blocks) rest
+      | _ -> failwith "Invalid 'block'"
+    in 
+    let lt_consts, lt_blocks = aux [] [] tags in
+    Lt_block { lt_consts ; lt_blocks }
+  | Ident i ->
+    Lt_var i
+  | Symbol s ->
+    Lt_const (type_const_of_string s)
+  | _ -> failwith "Unrecognized type"
+
 
 let function_split arguments = 
   let extract_param = function
