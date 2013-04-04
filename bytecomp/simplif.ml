@@ -45,7 +45,7 @@ let rec eliminate_ref id = function
       Lassign(id, Lprim(Poffsetint delta, [Lvar id]))
   | Lprim(p, el) ->
       Lprim(p, List.map (eliminate_ref id) el)
-  | Lswitch(e, sw) ->
+  | Lswitch(e, sw, ty) ->
       switch_alias (eliminate_ref id (Lvar e))
         {sw_numconsts = sw.sw_numconsts;
          sw_consts =
@@ -55,7 +55,7 @@ let rec eliminate_ref id = function
             List.map (fun (n, e) -> (n, eliminate_ref id e)) sw.sw_blocks;
          sw_failaction = match sw.sw_failaction with
          | None -> None
-         | Some l -> Some (eliminate_ref id l)}
+         | Some l -> Some (eliminate_ref id l)} ty
   | Lstaticraise (i,args) ->
       Lstaticraise (i,List.map (eliminate_ref id) args)
   | Lstaticcatch(e1, i, e2) ->
@@ -82,6 +82,12 @@ let rec eliminate_ref id = function
       Levent(eliminate_ref id l, ev)
   | Lifused(v, e) ->
       Lifused(v, eliminate_ref id e)
+  | Ltypeabs (ids, l) -> 
+      Ltypeabs (ids, eliminate_ref id l)
+  | Ltypeapp (l, targs) ->
+      Ltypeapp (eliminate_ref id l, targs)
+  | Lascribe (l, t) -> 
+      Lascribe (eliminate_ref id l, t)
 
 (* Simplification of exits *)
 
@@ -112,7 +118,7 @@ let simplify_exits lam =
       List.iter (fun (v, l) -> count l) bindings;
       count body
   | Lprim(p, ll) -> List.iter count ll
-  | Lswitch(l, sw) ->
+  | Lswitch(l, sw, ty) ->
       count_default sw ;
       (* count l; *)
       List.iter (fun (_, l) -> count l) sw.sw_consts;
@@ -147,6 +153,9 @@ let simplify_exits lam =
   | Lsend(k, m, o, ll, _) -> List.iter count (m::o::ll)
   | Levent(l, _) -> count l
   | Lifused(v, l) -> count l
+
+  | Ltypeabs (_, l) | Ltypeapp (l, _) | Lascribe (l, _) -> 
+      count l
 
   and count_default sw = match sw.sw_failaction with
   | None -> ()
@@ -207,7 +216,7 @@ let simplify_exits lam =
 
       | _ -> Lprim(p, ll)
      end
-  | Lswitch(l, sw) ->
+  | Lswitch(l, sw, ty) ->
       (* let new_l = simplif l *)
       let new_consts =  List.map (fun (n, e) -> (n, simplif e)) sw.sw_consts
       and new_blocks =  List.map (fun (n, e) -> (n, simplif e)) sw.sw_blocks
@@ -217,7 +226,7 @@ let simplify_exits lam =
       Lswitch
         (l,
          {sw with sw_consts = new_consts ; sw_blocks = new_blocks;
-                  sw_failaction = new_fail})
+                  sw_failaction = new_fail}, ty)
   | Lstaticraise (i,[]) as l ->
       begin try
         let _,handler =  Hashtbl.find subst i in
@@ -247,14 +256,14 @@ let simplify_exits lam =
       begin match count_exit i with
       | 0 -> simplif l1
       | _ ->
-          Hashtbl.add subst i (xs,l2) ;
+          Hashtbl.add subst i (List.map fst xs,l2) ;
           simplif l1
       end
   | Lstaticcatch (l1,(i,xs),l2) ->
       begin match count_exit i with
       | 0 -> simplif l1
       | 1 ->
-          Hashtbl.add subst i (xs,simplif l2) ;
+          Hashtbl.add subst i (List.map fst xs,simplif l2) ;
           simplif l1
       | _ ->
           Lstaticcatch (simplif l1, (i,xs), simplif l2)
@@ -269,6 +278,9 @@ let simplify_exits lam =
   | Lsend(k, m, o, ll, loc) -> Lsend(k, simplif m, simplif o, List.map simplif ll, loc)
   | Levent(l, ev) -> Levent(simplif l, ev)
   | Lifused(v, l) -> Lifused (v,simplif l)
+  | Ltypeabs (ids, l) -> Ltypeabs (ids, simplif l)
+  | Ltypeapp (l, targs) -> Ltypeapp (simplif l, targs)
+  | Lascribe (l, t) -> Lascribe (simplif l, t)
   in
   simplif lam
 
@@ -357,7 +369,7 @@ let simplify_lets lam =
       List.iter (fun (v, l) -> count bv l) bindings;
       count bv body
   | Lprim(p, ll) -> List.iter (count bv) ll
-  | Lswitch(l, sw) ->
+  | Lswitch(l, sw, ty) ->
       count_default bv sw ;
       count bv (Lvar l);
       List.iter (fun (_, l) -> count bv l) sw.sw_consts;
@@ -377,6 +389,8 @@ let simplify_lets lam =
   | Levent(l, _) -> count bv l
   | Lifused(v, l) ->
       if count_var v > 0 then count bv l
+  | Ltypeabs (_, l) | Ltypeapp (l, _) | Lascribe (l, _) -> 
+    count bv l
 
   and count_default bv sw = match sw.sw_failaction with
   | None -> ()
@@ -450,7 +464,7 @@ let simplify_lets lam =
   | Lletrec(bindings, body) ->
       Lletrec(List.map (fun (v, l) -> (v, simplif l)) bindings, simplif body)
   | Lprim(p, ll) -> Lprim(p, List.map simplif ll)
-  | Lswitch(l, sw) ->
+  | Lswitch(l, sw, ty) ->
       let new_l = simplif (Lvar l)
       and new_consts =  List.map (fun (n, e) -> (n, simplif e)) sw.sw_consts
       and new_blocks =  List.map (fun (n, e) -> (n, simplif e)) sw.sw_blocks
@@ -459,7 +473,7 @@ let simplify_lets lam =
       | Some l -> Some (simplif l) in
       switch_alias new_l
         {sw with sw_consts = new_consts ; sw_blocks = new_blocks;
-                 sw_failaction = new_fail}
+                 sw_failaction = new_fail} ty
   | Lstaticraise (i,ls) ->
       Lstaticraise (i, List.map simplif ls)
   | Lstaticcatch(l1, (i,args), l2) ->
@@ -479,6 +493,9 @@ let simplify_lets lam =
   | Levent(l, ev) -> Levent(simplif l, ev)
   | Lifused(v, l) ->
       if count_var v > 0 then simplif l else lambda_unit
+  | Ltypeabs (ids, l) -> Ltypeabs (ids, simplif l)
+  | Ltypeapp (l, targs) -> Ltypeapp (simplif l, targs)
+  | Lascribe (l, t) -> Lascribe (simplif l, t)
   in
   simplif lam
 
@@ -516,7 +533,7 @@ let rec emit_tail_infos is_tail lambda =
       emit_tail_infos is_tail arg2
   | Lprim (_, l) ->
       list_emit_tail_infos false l
-  | Lswitch (lam, sw) ->
+  | Lswitch (lam, sw, ty) ->
       (*emit_tail_infos false lam;*)
       list_emit_tail_infos_fun snd is_tail sw.sw_consts;
       list_emit_tail_infos_fun snd is_tail sw.sw_blocks
@@ -552,6 +569,8 @@ let rec emit_tail_infos is_tail lambda =
   | Levent (lam, _) ->
       emit_tail_infos is_tail lam
   | Lifused (_, lam) ->
+      emit_tail_infos is_tail lam
+  | Ltypeabs (_, lam) | Ltypeapp (lam, _) | Lascribe (lam, _) -> 
       emit_tail_infos is_tail lam
 and list_emit_tail_infos_fun f is_tail =
   List.iter (fun x -> emit_tail_infos is_tail (f x))

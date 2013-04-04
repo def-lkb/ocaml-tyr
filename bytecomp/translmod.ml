@@ -45,7 +45,7 @@ let rec apply_coercion restr arg =
   | Tcoerce_functor(cc_arg, cc_res) ->
       let param = Ident.create "funarg" in
       name_lambda arg (fun id ->
-        Lfunction(Curried, [param,Lt_bot],
+        Lfunction(Curried, [param,lt_TODO],
           apply_coercion cc_res
             (Lapply(Lvar id, [apply_coercion cc_arg (Lvar param)],
                     Location.none))))
@@ -244,11 +244,11 @@ let rec transl_module cc rootpath mexp =
       oo_wrap mexp.mod_env true
         (function
         | Tcoerce_none ->
-            Lfunction(Curried, [param,Lt_bot],
+            Lfunction(Curried, [param,lt_TODO],
                       transl_module Tcoerce_none bodypath body)
         | Tcoerce_functor(ccarg, ccres) ->
             let param' = Ident.create "funarg" in
-            Lfunction(Curried, [param',Lt_bot],
+            Lfunction(Curried, [param',lt_TODO],
                       Llet(Alias, param, apply_coercion ccarg (Lvar param'),
                            transl_module ccres bodypath body))
         | _ ->
@@ -325,7 +325,7 @@ and transl_structure fields cc rootpath = function
               (fun (ci, meths, vf) ->
                 let id = ci.ci_id_class in
                 let cl = ci.ci_expr in
-                  (id, transl_class ids id meths cl vf ))
+                  ((id,lt_TODO), transl_class ids id meths cl vf ))
                 cl_list,
               transl_structure (List.rev ids @ fields) cc rootpath rem)
   | Tstr_class_type cl_list ->
@@ -435,7 +435,7 @@ let transl_store_structure glob map prims str =
               (fun (ci, meths, vf) ->
                 let id = ci.ci_id_class in
                 let cl = ci.ci_expr in
-                     (id, transl_class ids id meths cl vf))
+                     ((id,lt_TODO), transl_class ids id meths cl vf))
                   cl_list,
                 store_idents ids) in
       Lsequence(subst_lambda subst lam,
@@ -647,7 +647,7 @@ let transl_toplevel_item item =
           (fun (ci, meths, vf) ->
             let id = ci.ci_id_class in
             let cl = ci.ci_expr in
-                   (id, transl_class ids id meths cl vf))
+                   ((id,lt_TODO), transl_class ids id meths cl vf))
                 cl_list,
               make_sequence
                 (fun (ci, _, _) -> toploop_setvalue_id ci.ci_id_class)

@@ -160,7 +160,7 @@ let rec build_object_init cl_table obj params inh_init obj_init cl =
       (inh_init,
        let build params rem =
          let param = name_pattern "param" [pat, ()] in
-         Lfunction (Curried, (param,Lt_bot)::params,
+         Lfunction (Curried, (param,lt_TODO)::params,
                     Matching.for_function
                       pat.pat_loc None (Lvar param) [pat, rem] partial)
        in
@@ -195,8 +195,8 @@ let rec build_object_init_0 cl_table params cl copy_env subst_env top ids =
       let ((_,inh_init), obj_init) =
         build_object_init cl_table obj params (envs,[]) (copy_env env) cl in
       let obj_init =
-        if ids = [] then obj_init else lfunction [self,Lt_bot] obj_init in
-      (inh_init, lfunction [env,Lt_bot] (subst_env env inh_init obj_init))
+        if ids = [] then obj_init else lfunction [self,lt_TODO] obj_init in
+      (inh_init, lfunction [env,lt_TODO] (subst_env env inh_init obj_init))
 
 
 let bind_method tbl lab id cl_init =
@@ -396,7 +396,7 @@ let rec transl_class_rebind obj_init cl vf =
       let path, obj_init = transl_class_rebind obj_init cl vf in
       let build params rem =
         let param = name_pattern "param" [pat, ()] in
-        Lfunction (Curried, (param,Lt_bot)::params,
+        Lfunction (Curried, (param,lt_TODO)::params,
                    Matching.for_function
                      pat.pat_loc None (Lvar param) [pat, rem] partial)
       in
@@ -428,7 +428,7 @@ let rec transl_class_rebind_0 self obj_init cl vf =
       (path, Translcore.transl_let rec_flag defs obj_init)
   | _ ->
       let path, obj_init = transl_class_rebind obj_init cl vf in
-      (path, lfunction [self,Lt_bot] obj_init)
+      (path, lfunction [self,lt_TODO] obj_init)
 
 let transl_class_rebind ids cl vf =
   try
@@ -438,7 +438,7 @@ let transl_class_rebind ids cl vf =
     let path, obj_init' = transl_class_rebind_0 self obj_init0 cl vf in
     if not (Translcore.check_recursive_lambda ids obj_init') then
       raise(Error(cl.cl_loc, Illegal_class_expr));
-    let id = (obj_init' = lfunction [self,Lt_bot] obj_init0) in
+    let id = (obj_init' = lfunction [self,lt_TODO] obj_init0) in
     if id then transl_path path else
 
     let cla = Ident.create "class"
@@ -447,15 +447,15 @@ let transl_class_rebind ids cl vf =
     and table = Ident.create "table"
     and envs = Ident.create "envs" in
     Llet(
-    Strict, new_init, lfunction [obj_init,Lt_bot] obj_init',
+    Strict, new_init, lfunction [obj_init,lt_TODO] obj_init',
     Llet(
     Alias, cla, transl_path path,
     Lprim(Pmakeblock(0, Immutable),
           [mkappl(Lvar new_init, [lfield cla 0]);
-           lfunction [table,Lt_bot]
+           lfunction [table,lt_TODO]
              (Llet(Strict, env_init,
                    mkappl(lfield cla 1, [Lvar table]),
-                   lfunction [envs,Lt_bot]
+                   lfunction [envs,lt_TODO]
                      (mkappl(Lvar new_init,
                              [mkappl(Lvar env_init, [Lvar envs])]))));
            lfield cla 2;
@@ -623,7 +623,7 @@ let transl_class ids cl_id pub_meths cl vflag =
   in
   let new_ids_meths = ref [] in
   let msubst arr = function
-      Lfunction (Curried, (self,Lt_bot) :: args, body) ->
+      Lfunction (Curried, (self,lt_TODO) :: args, body) ->
         let env = Ident.create "env" in
         let body' =
           if new_ids = [] then body else
@@ -634,7 +634,7 @@ let transl_class ids cl_id pub_meths cl vflag =
           if not arr || !Clflags.debug then raise Not_found;
           builtin_meths [self] env env2 (lfunction args body')
         with Not_found ->
-          [lfunction ((self,Lt_bot) :: args)
+          [lfunction ((self,lt_TODO) :: args)
              (if not (IdentSet.mem env (free_variables body')) then body' else
               Llet(Alias, env,
                    Lprim(Parrayrefu Paddrarray,
@@ -697,7 +697,7 @@ let transl_class ids cl_id pub_meths cl vflag =
 
   let concrete = (vflag = Concrete)
   and lclass lam =
-    let cl_init = llets (Lfunction(Curried, [cla,Lt_bot], cl_init)) in
+    let cl_init = llets (Lfunction(Curried, [cla,lt_TODO], cl_init)) in
     Llet(Strict, class_init, cl_init, lam (free_variables cl_init))
   and lbody fv =
     if List.for_all (fun id -> not (IdentSet.mem id fv)) ids then
@@ -714,7 +714,7 @@ let transl_class ids cl_id pub_meths cl vflag =
              Lvar class_init; Lvar env_init; lambda_unit]))))
   and lbody_virt lenvs =
     Lprim(Pmakeblock(0, Immutable),
-          [lambda_unit; Lfunction(Curried,[cla,Lt_bot], cl_init); lambda_unit; lenvs])
+          [lambda_unit; Lfunction(Curried,[cla,lt_TODO], cl_init); lambda_unit; lenvs])
   in
   (* Still easy: a class defined at toplevel *)
   if top && concrete then lclass lbody else
@@ -756,7 +756,7 @@ let transl_class ids cl_id pub_meths cl vflag =
     List.map (fun (_,p) -> Lprim(Pfield 1, [transl_path p])) inh_paths in
   let lclass lam =
     Llet(Strict, class_init,
-         Lfunction(Curried, [cla,Lt_bot], def_ids cla cl_init), lam)
+         Lfunction(Curried, [cla,lt_TODO], def_ids cla cl_init), lam)
   and lcache lam =
     if inh_keys = [] then Llet(Alias, cached, Lvar tables, lam) else
     Llet(Strict, cached,
@@ -772,7 +772,7 @@ let transl_class ids cl_id pub_meths cl vflag =
             Lsequence(mkappl (oo_prim "init_class", [Lvar cla]),
                       lset cached 0 (Lvar env_init))))
   and lclass_virt () =
-    lset cached 0 (Lfunction(Curried, [cla,Lt_bot], def_ids cla cl_init))
+    lset cached 0 (Lfunction(Curried, [cla,lt_TODO], def_ids cla cl_init))
   in
   llets (
   lcache (

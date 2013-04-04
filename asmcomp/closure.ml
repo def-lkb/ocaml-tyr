@@ -590,7 +590,8 @@ let rec close fenv cenv = function
             let (udefs, fenv_body) = clos_defs rem in
             let (ulam, approx) = close fenv cenv lam in
             ((id, ulam) :: udefs, Tbl.add id approx fenv_body) in
-        let (udefs, fenv_body) = clos_defs defs in
+        let (udefs, fenv_body) = clos_defs 
+            (Lambda.proj_bindings defs) in
         let (ubody, approx) = close fenv_body cenv body in
         (Uletrec(udefs, ubody), approx)
       end
@@ -626,7 +627,7 @@ let rec close fenv cenv = function
        Value_unknown)
   | Lprim(p, args) ->
       simplif_prim p (close_list_approx fenv cenv args) Debuginfo.none
-  | Lswitch(id, sw) ->
+  | Lswitch(id, sw, ty) ->
 (* NB: failaction might get copied, thus it should be some Lstaticraise *)
       let (uarg, _) = close fenv cenv (Lvar id) in
       let const_index, const_actions =
@@ -644,7 +645,7 @@ let rec close fenv cenv = function
   | Lstaticcatch(body, (i, vars), handler) ->
       let (ubody, _) = close fenv cenv body in
       let (uhandler, _) = close fenv cenv handler in
-      (Ucatch(i, vars, ubody, uhandler), Value_unknown)
+      (Ucatch(i, List.map fst vars, ubody, uhandler), Value_unknown)
   | Ltrywith(body, id, handler) ->
       let (ubody, _) = close fenv cenv body in
       let (uhandler, _) = close fenv cenv handler in
@@ -680,6 +681,8 @@ let rec close fenv cenv = function
       (add_debug_info ev ulam, approx)
   | Lifused _ ->
       assert false
+  | Ltypeabs (_, lam) | Ltypeapp (lam, _) | Lascribe (lam, _) -> 
+      close fenv cenv lam
 
 and close_list fenv cenv = function
     [] -> []
@@ -726,7 +729,7 @@ and close_functions fenv cenv fun_defs =
                fun_inline = None } in
             (id, List.map fst params, body, fundesc)
         | (_, _) -> fatal_error "Closure.close_functions")
-      fun_defs in
+      (Lambda.proj_bindings fun_defs) in
   (* Build an approximate fenv for compiling the functions *)
   let fenv_rec =
     List.fold_right
@@ -795,7 +798,7 @@ and close_functions fenv cenv fun_defs =
 (* Same, for one non-recursive function *)
 
 and close_one_function fenv cenv id funct =
-  match close_functions fenv cenv [id, funct] with
+  match close_functions fenv cenv [(id, lt_TODO), funct] with
       ((Uclosure([f], _) as clos),
        [_, _, (Value_closure(fundesc, _) as approx)]) ->
         (* See if the function can be inlined *)

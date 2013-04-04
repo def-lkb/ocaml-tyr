@@ -246,6 +246,8 @@ val const_unit       : structured_constant
 val lambda_unit      : lambda
 val name_lambda      : lambda -> (Ident.t -> lambda) -> lambda
 val name_lambda_list : lambda list -> (lambda list -> lambda) -> lambda
+val proj_binding     : binding * 'a -> Ident.t * 'a
+val proj_bindings    : (binding * 'a) list -> (Ident.t * 'a) list
 
 val lt_pointer     : int -> lambda_type
 val lt_unit        : lambda_type
@@ -253,6 +255,7 @@ val lt_bool        : lambda_type
 val lt_bot         : lambda_type
 val lt_const_int   : lambda_type
 val lt_const_float : lambda_type
+val lt_TODO        : lambda_type
 
 (** The "top" block, a block we don't know anything about.
     Current definition may make it looks like bottom… *)
@@ -263,7 +266,6 @@ val is_top_block : lambda_block -> bool
 val iter : (lambda -> unit) -> lambda -> unit
 
 (** {1 Extract free identifiers / variables} *)
-
 module IdentSet    : Set.S with type elt = Ident.t
 val free_variables : lambda -> IdentSet.t
 val free_methods   : lambda -> IdentSet.t

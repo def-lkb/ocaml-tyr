@@ -392,7 +392,7 @@ let is_immed n = immed_min <= n && n <= immed_max
 let rec comp_expr env exp sz cont =
   if sz > !max_stack_used then max_stack_used := sz;
   match exp with
-    Lvar id ->
+  | Lvar id ->
       begin try
         let pos = Ident.find_same id env.ce_stack in
         Kacc(sz - pos) :: cont
@@ -470,7 +470,7 @@ let rec comp_expr env exp sz cont =
         (* let rec of functions *)
         let fv =
           IdentSet.elements (free_variables (Lletrec(decl, lambda_unit))) in
-        let rec_idents = List.map (fun (id, lam) -> id) decl in
+        let rec_idents = List.map (fun ((id,ty), lam) -> id) decl in
         let rec comp_fun pos = function
             [] -> []
           | (id, Lfunction(kind, params, body)) :: rem ->
@@ -488,7 +488,7 @@ let rec comp_expr env exp sz cont =
                        (add_pop ndecl cont)))
       end else begin
         let decl_size =
-          List.map (fun (id, exp) -> (id, exp, size_of_lambda exp)) decl in
+          List.map (fun ((id,ty), exp) -> (id, exp, size_of_lambda exp)) decl in
         let rec comp_init new_env sz = function
           | [] -> comp_nonrec new_env sz ndecl decl_size
           | (id, exp, RHS_floatblock blocksize) :: rem ->
@@ -605,7 +605,7 @@ let rec comp_expr env exp sz cont =
           let lbl_handler, cont2 =
             label_code
               (comp_expr
-                (add_vars vars (sz+1) env)
+                (add_vars (List.map fst vars) (sz+1) env)
                 handler (sz+nvars) (add_pop nvars cont1)) in
           sz_static_raises :=
             (i, (lbl_handler, sz+nvars)) :: !sz_static_raises ;
@@ -613,7 +613,7 @@ let rec comp_expr env exp sz cont =
             (comp_expr env body (sz+nvars)
             (add_pop nvars (branch1 :: cont2)))
         end else begin (* small optimization for nvars = 1 *)
-          let var = match vars with [var] -> var | _ -> assert false in
+          let var = match vars with [var,ty] -> var | _ -> assert false in
           let lbl_handler, cont2 =
             label_code
               (Kpush::comp_expr
@@ -667,7 +667,7 @@ let rec comp_expr env exp sz cont =
              (Kacc 1 :: Kpush :: Koffsetint offset :: Kassign 2 ::
               Kacc 1 :: Kintcomp Cneq :: Kbranchif lbl_loop ::
               Klabel lbl_exit :: add_const_unit (add_pop 2 cont))))
-  | Lswitch(arg, sw) ->
+  | Lswitch(arg, sw, ty) ->
       let (branch, cont1) = make_branch cont in
       let c = ref (discard_dead_code cont1) in
 (* Build indirection vectors *)
@@ -757,6 +757,8 @@ let rec comp_expr env exp sz cont =
           comp_expr env lam sz cont1
       end
   | Lifused (_, exp) ->
+      comp_expr env exp sz cont
+  | Ltypeabs (_, exp) | Ltypeapp (exp, _) | Lascribe (exp, _) -> 
       comp_expr env exp sz cont
 
 (* Compile a list of arguments [e1; ...; eN] to a primitive operation.

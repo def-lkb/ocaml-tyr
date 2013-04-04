@@ -235,6 +235,7 @@ let lt_bot = (* forall A. A *)
   Lt_forall ([tA], Lt_var tA)
 let lt_const_int = Lt_const Lt_const_int
 let lt_const_float = Lt_const Lt_const_float
+let lt_TODO = Lt_top
 
 (** The "top" block, a block we don't know anything about.
     Current definition may make it looks like bottom… *)
@@ -272,6 +273,8 @@ let name_lambda_list args fn =
       Llet(Strict, id, arg, name_list (Lvar id :: names) rem) in
   name_list [] args
 
+let proj_binding ((id, ty), a) = id, a
+let proj_bindings l = List.map proj_binding l
 
 (** {1 Iterate through lambda} *)
 
