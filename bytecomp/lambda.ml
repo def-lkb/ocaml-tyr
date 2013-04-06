@@ -195,6 +195,13 @@ and lambda_type =
   | Lt_var    of Ident.t
   | Lt_mu     of Ident.t * lambda_type
   | Lt_forall of Ident.t list * lambda_type
+  | Lt_exists of Ident.t list * lambda_type
+  | Lt_tag    of lambda_constraint
+
+and lambda_constraint =
+  | Lc_open
+  | Lc_close
+  | Lc_constraint of lambda_atom * binding list * lambda_constraint
 
 and lambda_type_const =
   | Lt_const_int
