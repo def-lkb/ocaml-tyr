@@ -22,12 +22,12 @@ open Asttypes
 
 (** {1 Basic definitions} *)
 
-type tag = int
+type raw_tag = int
 
 type structured_constant =
   | Const_base        of constant
-  | Const_pointer     of tag
-  | Const_block       of tag * structured_constant list
+  | Const_pointer     of raw_tag
+  | Const_block       of raw_tag * structured_constant list
   | Const_float_array of string list
   | Const_immstring   of string
 
@@ -146,8 +146,8 @@ type lambda =
   | Lletrec of (binding * lambda) list * lambda
   | Lprim of primitive * lambda list
   | Lswitch of Ident.t * lambda_switch * lambda_type
-  | Lstaticraise of tag * lambda list
-  | Lstaticcatch of lambda * (tag * binding list) * lambda
+  | Lstaticraise of raw_tag * lambda list
+  | Lstaticcatch of lambda * (raw_tag * binding list) * lambda
   | Ltrywith of lambda * Ident.t * lambda
   | Lifthenelse of lambda * lambda * lambda
   | Lsequence of lambda * lambda
@@ -188,20 +188,21 @@ and lambda_event_kind =
 
 and lambda_type = 
   | Lt_top
-  | Lt_arrow  of lambda_type * lambda_type
-  | Lt_const  of lambda_type_const
-  | Lt_array  of lambda_type
-  | Lt_block  of lambda_block
   | Lt_var    of Ident.t
   | Lt_mu     of Ident.t * lambda_type
   | Lt_forall of Ident.t list * lambda_type
   | Lt_exists of Ident.t list * lambda_type
-  | Lt_tag    of lambda_constraint
 
-and lambda_constraint =
-  | Lc_open
-  | Lc_close
-  | Lc_constraint of lambda_atom * binding list * lambda_constraint
+  | Lt_arrow  of lambda_type * lambda_type
+  | Lt_const  of lambda_type_const
+  | Lt_array  of lambda_type
+
+  (* Structured values *)
+  | Lt_tagged  of tag_set
+
+  (* Exceptions *)
+  | Lt_exn
+  | Lt_witness of lambda_type option
 
 and lambda_type_const =
   | Lt_const_int
@@ -212,10 +213,11 @@ and lambda_type_const =
   | Lt_const_int64
   | Lt_const_nativeint
 
-and lambda_block = {
-  lt_blocks : (tag * lambda_type list) list;
-  lt_consts : tag list;
-}
+and tag_set =
+  | Tag_const of raw_tag * binding list * tag_set
+  | Tag_block of raw_tag * lambda_type list * binding list * tag_set
+  | Tag_open
+  | Tag_close 
 
 (* ********************************* *)
 (** {0 General purpose definitions} **)
@@ -234,22 +236,35 @@ exception Error of error
 let error err = raise (Error err)
 
 (** {1 Lambda types constructors} *)
-let lt_pointer i = Lt_block { lt_blocks = [] ; lt_consts = [i] } 
-let lt_unit = lt_pointer 0
-let lt_bool = Lt_block { lt_blocks = [] ; lt_consts = [0;1] }
+
+let rec tag_const raw ?(bindings=[]) = function
+  | Tag_const (n, b, t) when n < raw ->
+    Tag_const (n, b, tag_const raw ~bindings t)
+  | Tag_const (n, _, _) when n = raw ->
+    failwith "Conflicting tag"
+  | t -> Tag_const (raw, bindings, t)
+
+let rec tag_block raw tys ?(bindings=[]) = function
+  | Tag_const (n, b, t) ->
+    Tag_const (n, b, tag_block raw tys ~bindings t)
+  | Tag_block (n, p, b, t) when n < raw ->
+    Tag_block (n, p, b, tag_block raw tys ~bindings t)
+  | Tag_block (n, _, _, _) when n = raw ->
+    failwith "Conflicting tag"
+  | t -> Tag_const (raw, bindings, t)
+
+let lt_unit = Lt_tagged (Tag_const (0,[], Tag_close))
+
+let lt_bool = 
+  Lt_tagged (Tag_const (0,[], Tag_const (1,[], Tag_close)))
+
 let lt_bot = (* forall A. A *)
   let tA = Ident.create "A" in
   Lt_forall ([tA], Lt_var tA)
+
 let lt_const_int = Lt_const Lt_const_int
 let lt_const_float = Lt_const Lt_const_float
 let lt_TODO = Lt_top
-
-(** The "top" block, a block we don't know anything about.
-    Current definition may make it looks like bottom… *)
-let lt_top_block = Lt_block { lt_blocks = [] ; lt_consts = [] }
-let is_top_block = function
-  | { lt_blocks = [] ; lt_consts = [] } -> true
-  | _ -> false
 
 (** {1 Lambda expressions constructors} *)
 
@@ -508,16 +523,17 @@ and sameswitch sw1 sw2 =
 
 and sametype t1 t2 = match t1,t2 with
   | Lt_top, Lt_top -> true
-  | Lt_arrow (a,b), Lt_arrow (a',b') -> sametype a a' && sametype b b'
-  | Lt_const c, Lt_const c' -> sametconst c c'
-  | Lt_array t, Lt_array t' -> sametype t t'
-  | Lt_block b, Lt_block b' ->
-      samelist (=) b.lt_consts b'.lt_consts &&
-      samelist (fun (i,ts) (i',ts') -> i = i' && samelist sametype ts ts')
-               b.lt_blocks b'.lt_blocks
   | Lt_var v, Lt_var v' -> Ident.same v v'
   | Lt_mu (id,t), Lt_mu (id',t') -> Ident.same id id' && sametype t t'
   | Lt_forall (id,t), Lt_forall (id',t') -> samelist Ident.same id id' && sametype t t'
+  | Lt_exists (id,t), Lt_exists (id',t') -> samelist Ident.same id id' && sametype t t'
+
+  | Lt_arrow (a,b), Lt_arrow (a',b') -> sametype a a' && sametype b b'
+  | Lt_const c, Lt_const c' -> sametconst c c'
+  | Lt_array t, Lt_array t' -> sametype t t'
+  | Lt_tagged t, Lt_tagged t' -> sametagset t t'
+  | Lt_witness None, Lt_witness None -> true
+  | Lt_witness (Some t), Lt_witness (Some t') -> sametype t t'
   | _, _ -> false
 
 and sametconst c1 c2 = match c1,c2 with
@@ -528,7 +544,16 @@ and sametconst c1 c2 = match c1,c2 with
   | Lt_const_int32    , Lt_const_int32
   | Lt_const_int64    , Lt_const_int64
   | Lt_const_nativeint, Lt_const_nativeint -> true
-  | _ -> false
+  | _, _ -> false
+
+and sametagset t1 t2 = match t1, t2 with
+  | Tag_open, Tag_open | Tag_close, Tag_close -> true
+  | Tag_const (n1,b1,t1), Tag_const (n2,b2,t2) ->
+    n1 = n2 && samelist samebinding b1 b2 && sametagset t1 t2
+  | Tag_block (n1,p1,b1,t1), Tag_block (n2,p2,b2,t2) ->
+    n1 = n2 && samelist sametype p1 p2 &&
+    samelist samebinding b1 b2 && sametagset t1 t2
+  | _, _ -> false
 
 and samebinding b1 b2 = samepair Ident.same sametype b1 b2
 
@@ -592,18 +617,27 @@ let subst_type s ty =
   let rec subst = function
     | Lt_var id as t ->
       begin try Ident.find_same id s with Not_found -> t end
-    | Lt_top | Lt_const _ as t -> t
+    | Lt_exn | Lt_witness None | Lt_top | Lt_const _ as t -> t
     | Lt_arrow (t1,t2) -> Lt_arrow (subst t1, subst t2)
-    | Lt_block b ->
-      Lt_block { b with lt_blocks = List.map subst_block b.lt_blocks }
     | Lt_mu (id,t) ->
       assert_unbound id;
       Lt_mu (id, subst t)
     | Lt_array t -> Lt_array (subst t)
+    | Lt_exists (ids,t) ->
+      List.iter assert_unbound ids;
+      Lt_exists (ids, subst t)
     | Lt_forall (ids,t) ->
       List.iter assert_unbound ids;
       Lt_forall (ids, subst t)
-  and subst_block (tag,ts) = tag, List.map subst ts
+    | Lt_tagged ts -> Lt_tagged (subst_tagset ts)
+    | Lt_witness (Some t)  -> Lt_witness (Some t)
+  and subst_tagset = function
+    | Tag_close | Tag_open as t -> t
+    | Tag_const (r,b,ts) ->
+      Tag_const (r,List.map subst_binding b, subst_tagset ts)
+    | Tag_block (r,p,b,ts) ->
+      Tag_block (r,List.map subst p, List.map subst_binding b, subst_tagset ts)
+  and subst_binding (id,t) = id, subst t
   in
   subst ty
 

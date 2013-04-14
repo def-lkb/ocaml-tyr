@@ -1,3 +1,4 @@
+*.bak
 *.cm?
 *.cmx?
 *.o
@@ -134,3 +135,4 @@ bytecomp/lambdalexer.ml
 bytecomp/lambdaparser.ml
 bytecomp/lambdaparser.mli
 bytecomp/lambdaparser.output
+boot/Saved
