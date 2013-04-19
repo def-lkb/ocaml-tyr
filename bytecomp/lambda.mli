@@ -22,7 +22,7 @@ open Asttypes
 
 (** {1 Basic definitions} *)
 
-type tag = int
+type raw_tag = int
 
 type structured_constant =
     Const_base of constant
@@ -155,8 +155,8 @@ type lambda =
   | Lletrec of (binding * lambda) list * lambda
   | Lprim of primitive * lambda list
   | Lswitch of Ident.t * lambda_switch * lambda_type
-  | Lstaticraise of tag * lambda list
-  | Lstaticcatch of lambda * (tag * binding list) * lambda
+  | Lstaticraise of raw_tag * lambda list
+  | Lstaticcatch of lambda * raw_tag * binding list * lambda
   | Ltrywith of lambda * Ident.t * lambda
   | Lifthenelse of lambda * lambda * lambda
   | Lsequence of lambda * lambda
@@ -197,13 +197,21 @@ and lambda_event_kind =
 
 and lambda_type = 
   | Lt_top
-  | Lt_arrow  of lambda_type * lambda_type
-  | Lt_const  of lambda_type_const
-  | Lt_array  of lambda_type
-  | Lt_block  of lambda_block
   | Lt_var    of Ident.t
   | Lt_mu     of Ident.t * lambda_type
   | Lt_forall of Ident.t list * lambda_type
+  | Lt_exists of Ident.t list * lambda_type
+
+  | Lt_arrow  of lambda_type * lambda_type
+  | Lt_const  of lambda_type_const
+  | Lt_array  of lambda_type
+
+  (* Structured values *)
+  | Lt_tagged  of tag_set
+
+  (* Exceptions *)
+  | Lt_exn
+  | Lt_witness of lambda_type option
 
 and lambda_type_const =
   | Lt_const_int
@@ -214,15 +222,18 @@ and lambda_type_const =
   | Lt_const_int64
   | Lt_const_nativeint
 
-and lambda_block = {
-  lt_blocks : (tag * lambda_type list) list;
-  lt_consts : tag list;
-}
+and tag_set =
+  | Tag_const of raw_tag * refinement * tag_set
+  | Tag_block of raw_tag * refinement * lambda_type list * tag_set
+  | Tag_open
+  | Tag_close 
+
+and refinement = Ident.t list * binding list
+
 
 (* ********************************* *)
 (** {0 General purpose definitions} **)
 (* ********************************* *)
-
 
 (** {1 Handling of type errors} *)
 type error =
@@ -249,18 +260,12 @@ val name_lambda_list : lambda list -> (lambda list -> lambda) -> lambda
 val proj_binding     : binding * 'a -> Ident.t * 'a
 val proj_bindings    : (binding * 'a) list -> (Ident.t * 'a) list
 
-val lt_pointer     : int -> lambda_type
 val lt_unit        : lambda_type
 val lt_bool        : lambda_type
 val lt_bot         : lambda_type
 val lt_const_int   : lambda_type
 val lt_const_float : lambda_type
 val lt_TODO        : lambda_type
-
-(** The "top" block, a block we don't know anything about.
-    Current definition may make it looks like bottom… *)
-val lt_top_block : lambda_type
-val is_top_block : lambda_block -> bool
 
 (** {1 Iterate through lambda} *)
 val iter : (lambda -> unit) -> lambda -> unit
@@ -314,10 +319,12 @@ val subst_type   : lambda_type Ident.tbl -> lambda_type -> lambda_type
 type context
 val context_empty : context 
 val bind_var  : Ident.t -> lambda_type -> context -> context
-val bind_vars : (Ident.t * lambda_type) list -> context -> context
+val bind_freevar : Ident.t -> context -> context
+val bind_vars : ?using:(Ident.t -> lambda_type -> context -> context) ->
+    (Ident.t * lambda_type) list -> context -> context
 
-val assert_subtype : context -> lambda_type -> lambda_type -> unit
-val subtype : context -> lambda_type -> lambda_type -> bool
+val (<:) : lambda_type -> lambda_type -> ctx:context -> unit
+val (<:?) : lambda_type -> lambda_type -> ctx:context -> bool
 
 (* ************************************* *)
 (** {0 Type-checking lambda expression} **)

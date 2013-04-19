@@ -147,7 +147,7 @@ type lambda =
   | Lprim of primitive * lambda list
   | Lswitch of Ident.t * lambda_switch * lambda_type
   | Lstaticraise of raw_tag * lambda list
-  | Lstaticcatch of lambda * (raw_tag * binding list) * lambda
+  | Lstaticcatch of lambda * raw_tag * binding list * lambda
   | Ltrywith of lambda * Ident.t * lambda
   | Lifthenelse of lambda * lambda * lambda
   | Lsequence of lambda * lambda
@@ -165,9 +165,9 @@ and binding = Ident.t * lambda_type
 
 and lambda_switch = {
   sw_numconsts  : int;
-  sw_consts     : (int * lambda) list;
+  sw_consts     : (raw_tag * lambda) list;
   sw_numblocks  : int;
-  sw_blocks     : (int * lambda) list;
+  sw_blocks     : (raw_tag * lambda) list;
   sw_failaction : lambda option;
 }
 
@@ -266,6 +266,58 @@ let rec assert_wellformed_tagset = function
     assert_wellformed_tagset ts
   | _ -> failwith "Malformed tagset"
 
+let rec tagset_const_shift n = function
+  | Tag_const (c, r, ts) -> Tag_const (c+n, r, tagset_const_shift n ts)
+  | ts -> ts
+
+type tagset_const_op = [`Eq|`Ne|`Lt|`Gt|`Le|`Ge]
+let tagset_const_op_neg = function
+  |`Eq -> `Ne
+  |`Ne -> `Eq
+  |`Lt -> `Ge
+  |`Gt -> `Le
+  |`Le -> `Gt
+  |`Ge -> `Lt
+let tagset_const_op_eval = function
+  | `Eq -> (=)
+  | `Ne -> (<>)
+  | `Lt -> (<)
+  | `Gt -> (>)
+  | `Le -> (<=)
+  | `Ge -> (>=)
+
+let tagset_const_eval (op : tagset_const_op) rhs tag =
+  let id t = t and close _ = Tag_close and rel = tagset_const_op_eval op in
+  match tag with
+  | Tag_close | Tag_open ->
+    begin match op with
+      | `Eq -> close, id
+      | `Ne -> id, close
+      | _   -> id, id
+    end
+  | Tag_block (t,r,fs,_) -> id, (fun ts -> Tag_block (t,r,fs,ts)) 
+  | Tag_const (lhs,r,_) when rel lhs rhs ->
+    (fun ts -> Tag_const (lhs,r,ts)), id
+  | Tag_const (lhs,r,_) ->
+    id, (fun ts -> Tag_const (lhs,r,ts))
+
+let rec tagset_apply op rhs ts =
+  let true', false' = match ts with
+    | Tag_close | Tag_open -> ts, ts
+    | Tag_const (_,_,ts) | Tag_block (_,_,_,ts) -> tagset_apply op rhs ts
+  in
+  let true'f, false'f = tagset_const_eval op rhs ts in
+  true'f true', false'f false'
+
+let rec tagset_match_const c = function
+  | Tag_const (c',r,_) when c = c' -> Tag_const (c',r,Tag_close)
+  | Tag_const (_,_,ts) | Tag_block (_,_,_,ts) -> tagset_match_const c ts
+  | Tag_open | Tag_close as t -> t
+
+let rec tagset_match_block c = function
+  | Tag_block (c',r,tys,_) when c = c' -> Tag_block (c',r,tys,Tag_close)
+  | Tag_const (_,_,ts) | Tag_block (_,_,_,ts) -> tagset_match_const c ts
+  | Tag_open | Tag_close as t -> t
 
 let lt_unit = Lt_tagged (tag_const 0 Tag_close)
 
@@ -337,7 +389,7 @@ let iter f = function
     end
   | Lstaticraise (_,args) ->
     List.iter f args
-  | Lstaticcatch(e1, (_,vars), e2) ->
+  | Lstaticcatch(e1, tag, vars, e2) ->
     f e1; f e2
   | Ltrywith(e1, exn, e2) ->
     f e1; f e2
@@ -381,8 +433,8 @@ let free_ids get l =
       fv := IdentSet.remove id !fv
     | Lletrec(decl, body) ->
       List.iter (fun ((id, t), exp) -> fv := IdentSet.remove id !fv) decl
-    | Lstaticcatch(e1, (_,vars), e2) ->
-      List.iter (fun (id,ty) -> fv := IdentSet.remove id !fv) vars
+    | Lstaticcatch(e1, tag, bindings, e2) ->
+      List.iter (fun (id,ty) -> fv := IdentSet.remove id !fv) bindings
     | Ltrywith(e1, exn, e2) ->
       fv := IdentSet.remove exn !fv
     | Lfor(v, e1, e2, dir, e3) ->
@@ -493,8 +545,8 @@ let rec same l1 l2 =
     Ident.same a1 a2 && sameswitch s1 s2 && sametype t1 t2
   | Lstaticraise(n1, al1), Lstaticraise(n2, al2) ->
     n1 = n2 && samelist same al1 al2
-  | Lstaticcatch(a1, (n1, bindl1), b1), Lstaticcatch(a2, (n2, bindl2), b2) ->
-    same a1 a2 && n1 = n2 && samelist samebinding bindl1 bindl2 && same b1 b2
+  | Lstaticcatch(a1, n1, b1, l1), Lstaticcatch(a2, n2, b2, l2) ->
+    same a1 a2 && n1 = n2 && samelist samebinding b1 b2 && same l1 l2
   | Ltrywith(a1, id1, b1), Ltrywith(a2, id2, b2) ->
     same a1 a2 && Ident.same id1 id2 && same b1 b2
   | Lifthenelse(a1, b1, c1), Lifthenelse(a2, b2, c2) ->
@@ -545,9 +597,11 @@ and sametype t1 t2 = match t1,t2 with
   | Lt_const c, Lt_const c' -> sametconst c c'
   | Lt_array t, Lt_array t' -> sametype t t'
   | Lt_tagged t, Lt_tagged t' -> sametagset t t'
+  | Lt_exn, Lt_exn -> true
   | Lt_witness None, Lt_witness None -> true
   | Lt_witness (Some t), Lt_witness (Some t') -> sametype t t'
-  | _, _ -> false
+  | (Lt_top | Lt_var _ | Lt_mu _ | Lt_forall _ | Lt_exists _ | Lt_arrow _ |
+     Lt_const _ | Lt_array _ | Lt_tagged _ | Lt_witness _ | Lt_exn ), _ -> false
 
 and sametconst c1 c2 = match c1,c2 with
   | Lt_const_int      , Lt_const_int      
@@ -604,7 +658,7 @@ let subst_lambda s lam =
                    | Some l -> Some (subst l)}, ty)
 
     | Lstaticraise (i,args) ->  Lstaticraise (i, List.map subst args)
-    | Lstaticcatch(e1, io, e2) -> Lstaticcatch(subst e1, io, subst e2)
+    | Lstaticcatch(e1, tag, ref, e2) -> Lstaticcatch(subst e1, tag, ref, subst e2)
     | Ltrywith(e1, exn, e2) -> Ltrywith(subst e1, exn, subst e2)
     | Lifthenelse(e1, e2, e3) -> Lifthenelse(subst e1, subst e2, subst e3)
     | Lsequence(e1, e2) -> Lsequence(subst e1, subst e2)
@@ -663,33 +717,71 @@ let subst_type s ty =
 (** {0 Subtyping relation} **)
 (* ************************ *)
 
+(** Context management *)
 type context = {
   ctx_vars     : lambda_type Ident.tbl;
   ctx_catchers : (int * lambda_type list) list;
 } 
 
 let context_empty = { ctx_vars = Ident.empty ; ctx_catchers = [] }
+let is_freevar v ctx =
+  try match Ident.find_same v ctx.ctx_vars with
+    | Lt_var v' -> Ident.same v v'
+    | _ -> false
+  with Not_found -> false
 
 let bind_var id tyarg ctx =
   { ctx with ctx_vars = Ident.add id tyarg ctx.ctx_vars }
-let bind_vars vars ctx =
-  List.fold_left (fun ctx (id,t) -> bind_var id t ctx) ctx vars
+
+let bind_freevar id ctx = bind_var id (Lt_var id) ctx
+
+let bind_vars ?(using=bind_var) vars ctx =
+  List.fold_left (fun ctx (id,t) -> using id t ctx) ctx vars
+
 let bind_catcher tag types ctx =
   { ctx with ctx_catchers = (tag,types) :: ctx.ctx_catchers }
 
+let rec context_refine (ids,bindings) ctx =
+  let ctx,tbl = List.fold_left
+      (fun (ctx,tbl) id ->
+        let id' = Ident.rename id in
+        bind_freevar id' ctx,
+        Ident.add id (Lt_var id') tbl)
+      (ctx,Ident.empty) ids
+  in
+  let bind ctx (id,ty) =
+    let ty' = subst_type tbl ty in
+    bind_refine id ty' ctx
+  in
+  tbl, List.fold_left bind ctx bindings
+
+and bind_refine id tyarg ctx =
+  match tyarg with
+  | Lt_tagged (Tag_const (c,r,Tag_close)) ->
+    let _, ctx = context_refine r ctx in
+    bind_var id (Lt_tagged (Tag_const (c,([],[]),Tag_close))) ctx
+  | Lt_tagged (Tag_block (c,r,tys,Tag_close)) ->
+    let tbl, ctx = context_refine r ctx in
+    let tys = List.map (subst_type tbl) tys in
+    bind_var id (Lt_tagged (Tag_block (c,([],[]),tys,Tag_close))) ctx
+  | _ -> bind_var id tyarg ctx
+
+and tagset_refine ts ctx = match ts with
+  | Tag_const (_,r,Tag_close) | Tag_block (_,r,_,Tag_close) ->
+    snd (context_refine r ctx)
+  | _ -> ctx
+
+(** Assumptions management, used to implement subtype relation *)
 module AssumSet = Set.Make(struct type t = Ident.t * lambda_type let compare = compare end)
 type assumptions = {
-  as_fv : IdentSet.t;
   as_l  : AssumSet.t; 
   as_r  : AssumSet.t;
 }
 
 let assuming_l id t { as_l } = AssumSet.mem (id,t) as_l
 let assuming_r t id { as_r } = AssumSet.mem (id,t) as_r
-let is_freevar id   { as_fv } = IdentSet.mem id as_fv
 
 let assum_empty = {
-  as_fv = IdentSet.empty;
   as_l  = AssumSet.empty;
   as_r  = AssumSet.empty;
 }
@@ -706,12 +798,12 @@ let rec compare_type ~subtype ~assum ~ctx t1 t2 =
   | Lt_top, Lt_top -> ()
 
   | Lt_var v1, Lt_var v2 when Ident.same v1 v2
-                           && is_freevar v1 assum ->
+                           && is_freevar v1 ctx ->
     ()
 
   | Lt_var v, t when assuming_l v t assum -> ()
   | t, Lt_var v when assuming_r t v assum -> ()
-  | Lt_var id, t2 when not (is_freevar id assum) ->
+  | Lt_var id, t2 when not (is_freevar id ctx) ->
     begin match 
         try Some (Ident.find_same id ctx.ctx_vars)
         with Not_found -> None
@@ -719,7 +811,7 @@ let rec compare_type ~subtype ~assum ~ctx t1 t2 =
       | None -> error (Unbound_tvar id)
       | Some t1 -> compare_type ~assum:(assum_l id t2 assum) t1 t2
     end
-  | t1, Lt_var id when not (is_freevar id assum) ->
+  | t1, Lt_var id when not (is_freevar id ctx) ->
     begin match 
         try Some (Ident.find_same id ctx.ctx_vars)
         with Not_found -> None
@@ -748,25 +840,27 @@ let rec compare_type ~subtype ~assum ~ctx t1 t2 =
 
   | Lt_forall (idl1,t1), Lt_forall (idl2,t2)
     when List.length idl1 = List.length idl2 ->
-    let as_fv, ctx = List.fold_left2
-        (fun (fv,ctx) id1 id2 ->
+    let ctx = List.fold_left2
+        (fun ctx id1 id2 ->
           let id' = Ident.rename id1 in
-          IdentSet.add id' fv,
-          bind_var id1 (Lt_var id') (bind_var id2 (Lt_var id') ctx))
-        (assum.as_fv, ctx) idl1 idl2
+          bind_var id1 (Lt_var id')
+            (bind_var id2 (Lt_var id')
+            (bind_freevar id' ctx)))
+        ctx idl1 idl2
     in
-    compare_type ~assum:{assum with as_fv} t1 t2
+    compare_type ~ctx t1 t2
 
   | Lt_exists (idl1,t1), Lt_exists (idl2,t2)
     when List.length idl1 = List.length idl2 ->
-    let as_fv, ctx = List.fold_left2
-        (fun (fv,ctx) id1 id2 ->
+    let ctx = List.fold_left2
+        (fun ctx id1 id2 ->
           let id' = Ident.rename id1 in
-          IdentSet.add id' fv,
-          bind_var id1 (Lt_var id') (bind_var id2 (Lt_var id') ctx))
-        (assum.as_fv, ctx) idl1 idl2
+          bind_var id1 (Lt_var id')
+            (bind_var id2 (Lt_var id')
+            (bind_freevar id' ctx)))
+        ctx idl1 idl2
     in
-    compare_type ~assum:{assum with as_fv} t1 t2
+    compare_type ~ctx t1 t2
 
   | Lt_exn, Lt_exn -> ()
   | Lt_witness None, Lt_witness None -> ()
@@ -785,12 +879,12 @@ and compare_tagset ~subtype ~assum ~ctx s1 s2 =
   | Tag_open, Tag_open | Tag_close, Tag_close -> ()
 
   | Tag_const (c1, r1, s1'), Tag_const (c2, r2, s2') when c1 = c2 ->
-    ignore (compare_refinements ~subtype ~assum ~ctx r1 r2);
+    ignore (compare_refinement ~subtype ~assum ~ctx r1 r2);
     compare_tagset s1' s2'
 
   | Tag_block (c1, r1, p1, s1'), Tag_block (c2, r2, p2, s2')
     when c1 = c2 && List.length p1 = List.length p2 ->
-    let ctx = compare_refinements ~subtype ~assum ~ctx r1 r2 in
+    let ctx = compare_refinement ~subtype ~assum ~ctx r1 r2 in
     List.iter2 (compare_type ~subtype ~assum ~ctx) p1 p2;
     compare_tagset s1' s2'
 
@@ -805,8 +899,38 @@ and compare_tagset ~subtype ~assum ~ctx s1 s2 =
 
   | _, _ -> error (Not_subtype (Lt_tagged s1, Lt_tagged s2))
 
-and compare_refinements ~subtype ~assum ~ctx r1 r2 =
-  failwith "TODO"
+and compare_refinement ~subtype ~assum ~ctx r1 r2 = match r1,r2 with
+  | (ids,p), ([],[]) when subtype ->
+    snd (context_refine r1 ctx)
+
+  | (ids1,binds1), (ids2,binds2)
+    when List.length ids1 = List.length ids2 ->
+    let vars  = List.map Ident.rename ids1 in
+    let tvars = List.map (fun i -> Lt_var i) vars in
+    let ctx = List.fold_right bind_freevar vars ctx in
+    let ctx = List.fold_right2 bind_var ids1 tvars ctx in
+    let ctx = List.fold_right2 bind_var ids2 tvars ctx in
+    let sort = List.sort (fun (a,_) (b,_) -> compare a b) in
+    let rec aux b1 b2 = match b1, b2 with
+      | (id1,t1) :: b1', (id2,t2) :: b2' when id1 = id2 ->
+        compare_type ~subtype ~assum ~ctx t1 t2;
+        aux b1' b2'
+      | [], [] -> ()
+
+      | (id1,_) :: b1', (id2,_) :: _ when id1 < id2 && subtype -> aux b1' b2
+      | _, [] when subtype -> ()
+      | _, _ -> error (Fail "missing binding in refinement")
+    in
+    aux (sort binds1) (sort binds2);
+    let tbl = Ident.empty in
+    let tbl = List.fold_right2 Ident.add ids1 tvars tbl in
+    let tbl = List.fold_right2 Ident.add ids2 tvars tbl in
+    let bind ctx (id,ty) =
+      bind_refine id (subst_type tbl ty) ctx in
+    List.fold_left bind ctx binds1
+
+  | _, _ -> error (Fail "incompatible refinement")
+
 
 let (<:) t1 t2 ~ctx =
   compare_type ~subtype:true ~assum:assum_empty ~ctx t1 t2
@@ -1005,16 +1129,16 @@ and typeof ctx = function
     in
     List.fold_left tapp tfun args
   | Lfunction (Curried,args,body) ->
-    let tbody = typeof (bind_vars args ctx) body in
+    let tbody = typeof (bind_vars ~using:bind_refine args ctx) body in
     List.fold_right (fun (_,targ) tres -> Lt_arrow (targ,tres))
       args tbody
   | Lfunction (Tupled,args,body) ->
-    let tbody = typeof (bind_vars args ctx) body in
+    let tbody = typeof (bind_vars ~using:bind_refine args ctx) body in
     let targs = List.map snd args in
     Lt_arrow (Lt_tagged (tag_block 0 targs Tag_close), tbody)
   | Llet (_,id,expr,body) ->
     let texpr = typeof ctx expr in
-    typeof (bind_var id texpr ctx) body 
+    typeof (bind_refine id texpr ctx) body 
   | Lletrec (bindings, body) ->
     let ctx' = bind_vars (List.map fst bindings) ctx in
     let validate ((id,ty),expr) =
@@ -1052,10 +1176,13 @@ and typeof ctx = function
     (tval <: tvar) ~ctx;
     lt_unit
   | Ltypeabs (ids,lam) ->
-    let vars = List.map Ident.rename ids in
-    let bindings = List.map2 (fun id var -> id, Lt_var var) ids vars in
-    let tlam = typeof (bind_vars bindings ctx) lam in
-    Lt_forall (vars, tlam)
+    let ids' = List.map Ident.rename ids in
+    let aux ctx id id' =
+      bind_var id (Lt_var id') (bind_freevar id ctx)
+    in
+    let ctx = List.fold_left2 aux ctx ids ids' in
+    let tlam = typeof ctx lam in
+    Lt_forall (ids', tlam)
   | Ltypeapp (lam,tys) ->
     let tlam = typeof ctx lam in
     begin match tlam with
@@ -1071,63 +1198,22 @@ and typeof ctx = function
   | Lsend _ | Levent _ | Lifused _ ->
     failwith "TODO"
 
-  | Lswitch (v, sw, ty) ->
-    begin match
-        try Ident.find_same v ctx.ctx_vars
-        with Not_found -> error (Unbound_var v)
-      with
-      | Lt_block texpr ->
-        let get a i =
-          try a.(i) with Invalid_argument _ ->
-            error (Fail "out-of-bound tag in switch")
-        and set a i v =
-          try a.(i) <- v
-          with Invalid_argument _ ->
-            error (Fail "out-of-bound tag in switch")
-        in
-        let refine_block tag =
-          try Lt_block {
-              lt_blocks = [tag, List.assoc tag texpr.lt_blocks];
-              lt_consts = [] }
-          with Not_found ->
-            error (Fail "unexpected tag")
-        and refine_const tag =
-          assert (List.exists ((=) tag) texpr.lt_consts);
-          Lt_block { lt_blocks = [] ; lt_consts = [tag] }
-        in
-        let br_blocks, br_consts =
-          Array.make sw.sw_numblocks None,
-          Array.make sw.sw_numconsts None
-        in 
-        let process_branch refine tystore (tag,body) =
-          (* FIXME: Check out of bounds access *)
-          set tystore tag (Some (typeof (bind_var v (refine tag) ctx) body))
-        in
-        (* Type each branch in refined context *)
-        List.iter (process_branch refine_block br_blocks) sw.sw_blocks;
-        List.iter (process_branch refine_const br_consts) sw.sw_consts;
-        (* Check all cases are covered *)
-        if sw.sw_failaction = None &&
-           (List.exists (fun tag -> get br_consts tag = None) texpr.lt_consts ||
-            List.exists (fun (tag,_) -> get br_blocks tag = None) texpr.lt_blocks)
-        then error (Fail "case not handled in switch");
-        (* Check branch types are included in result type *) 
-        let check_type = function
-          | Some ty' -> assert_subtype ctx ty' ty
-          | None -> ()
-        in
-        Array.iter check_type br_blocks;
-        Array.iter check_type br_consts;
-        check_type (Misc.may_map (typeof ctx) sw.sw_failaction);
-        ty
-      | _ -> error (Fail "matching on non-block type")
-    end
-
   | Lifthenelse (lcond,lthen,lelse) ->
-    (typeof ctx lcond <: lt_bool) ~ctx;
-    let lt = typeof ctx lthen in
-    (typeof ctx lelse <: lt) ~ctx;
-    lt
+    let tcond = typeof ctx lcond in 
+    (tcond <: lt_bool) ~ctx;
+    begin match tcond with
+      | Lt_tagged ts ->
+        let rthen, relse = tagset_apply `Ne 0 ts in
+        let tthen = typeof (tagset_refine rthen ctx) lthen 
+        and telse = typeof (tagset_refine relse ctx) lelse 
+        in
+        (telse <: tthen) ~ctx;
+        tthen
+      | _ ->
+        let tthen = typeof ctx lthen in
+        (typeof ctx lelse <: tthen) ~ctx;
+        tthen
+    end
 
   | Lstaticraise (tag, args) ->
     let targs = List.map (typeof ctx) args in
@@ -1139,9 +1225,34 @@ and typeof ctx = function
     List.iter2 ((<:) ~ctx) targs texpected;
     lt_bot
 
-  | Lstaticcatch (expr, (id,bindings), handler) ->
+  | Lstaticcatch (expr, id, bindings, handler) ->
     let texpr = typeof (bind_catcher id (List.map snd bindings) ctx) expr in
     let thandler = typeof (bind_vars bindings ctx) handler in
     (thandler <: texpr) ~ctx;
     texpr
+
+  | Lswitch (v, sw, ty) ->
+    let tagset =
+      match try Ident.find_same v ctx.ctx_vars
+            with Not_found -> error (Unbound_var v)
+      with Lt_tagged ts -> ts
+         | _ -> error (Fail "switch on non-tagged type")
+    in
+    let case_const (tag,body) =
+      let tagset = tagset_match_const tag tagset in
+      let ctx = tagset_refine tagset ctx in
+      let ctx = bind_var v (Lt_tagged tagset) ctx in
+      let tbody = typeof ctx body in
+      (tbody <: ty) ~ctx
+    in
+    let case_block (tag,body) =
+      let tagset = tagset_match_block tag tagset in
+      let ctx = tagset_refine tagset ctx in
+      let ctx = bind_var v (Lt_tagged tagset) ctx in
+      let tbody = typeof ctx body in
+      (tbody <: ty) ~ctx
+    in
+    List.iter case_const sw.sw_consts;
+    List.iter case_block sw.sw_blocks;
+    ty
 

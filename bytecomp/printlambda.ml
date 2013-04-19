@@ -228,17 +228,24 @@ let rec lam_ty ppf = function
     fprintf ppf "(forall (%a) %a)"
       (print_list ~delim:" " Ident.print) ids
       lam_ty t
-  | Lt_block b when is_top_block b -> 
-    fprintf ppf "(exn)"
-  | Lt_block { Lambda. lt_consts ; lt_blocks }  -> 
-    let print_const ppf tag = fprintf ppf " %da" tag in
-    let print_block ppf (tag,tys) =
-      fprintf ppf " (%d:%a)" tag
-        (print_list ~first:" " ~delim:" " lam_ty) tys
-    in
-    fprintf ppf "(block%a%a)"
-      (print_list print_const) lt_consts 
-      (print_list print_block) lt_blocks
+  | Lt_exn -> fprintf ppf "(exn)"
+  | Lt_tagged tagset  -> 
+    fprintf ppf "(block%a)"
+      lam_tagset tagset 
+
+and lam_tagset ppf = function
+  | Tag_close -> ()
+  | Tag_open  -> fprintf ppf " ..."
+  | Tag_const (c,r,ts') ->
+  | Tag_block (c,r,tys,ts') -> 
+
+and lam_refinement ppf (exists,bindings) =
+  let print_binding (id,ty) = 
+    fprintf ppf " (%a@ %a)" Ident.print id lam_ty ty;
+  in
+  match exists with
+  | 
+  |
 ;; 
 let rec lam ppf = function
   | Lvar id ->
