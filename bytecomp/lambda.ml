@@ -145,7 +145,7 @@ type lambda =
   | Llet of let_kind * Ident.t * lambda * lambda
   | Lletrec of (binding * lambda) list * lambda
   | Lprim of primitive * lambda list
-  | Lswitch of Ident.t * lambda_switch * lambda_type
+  | Lswitch of Ident.t * lambda_switch * ty
   | Lstaticraise of raw_tag * lambda list
   | Lstaticcatch of lambda * raw_tag * binding list * lambda
   | Ltrywith of lambda * Ident.t * lambda
@@ -158,10 +158,10 @@ type lambda =
   | Levent of lambda * lambda_event
   | Lifused of Ident.t * lambda
   | Ltypeabs of Ident.t list * lambda
-  | Ltypeapp of lambda * lambda_type list
-  | Lascribe of lambda * lambda_type
+  | Ltypeapp of lambda * ty list
+  | Lascribe of lambda * ty
 
-and binding = Ident.t * lambda_type
+and binding = Ident.t * ty
 
 and lambda_switch = {
   sw_numconsts  : int;
@@ -186,36 +186,43 @@ and lambda_event_kind =
 
 (** {1 Types of lambda language} *)
 
-and lambda_type = 
-  | Lt_top
-  | Lt_var    of Ident.t
-  | Lt_mu     of Ident.t * lambda_type
-  | Lt_forall of Ident.t list * lambda_type
-  | Lt_exists of Ident.t list * lambda_type
+and ty = 
+  | Ty_top
+  | Ty_var    of Ident.t
+  | Ty_link   of ty_link ref
+  | Ty_mu     of Ident.t * ty
+  | Ty_forall of Ident.t list * ty
+  | Ty_exists of Ident.t list * ty
 
-  | Lt_arrow  of lambda_type * lambda_type
-  | Lt_const  of lambda_type_const
-  | Lt_array  of lambda_type
+  | Ty_arrow  of ty * ty
+  | Ty_const  of ty_const
+  | Ty_array  of ty
 
   (* Structured values *)
-  | Lt_tagged  of tag_set
+  | Ty_tagged  of tag_set
 
   (* Exceptions *)
-  | Lt_exn
-  | Lt_witness of lambda_type option
+  | Ty_exn
+  | Ty_witness of ty option
 
-and lambda_type_const =
-  | Lt_const_int
-  | Lt_const_char
-  | Lt_const_string
-  | Lt_const_float
-  | Lt_const_int32
-  | Lt_const_int64
-  | Lt_const_nativeint
+and ty_const =
+  | Ty_const_int
+  | Ty_const_char
+  | Ty_const_string
+  | Ty_const_float
+  | Ty_const_int32
+  | Ty_const_int64
+  | Ty_const_nativeint
+
+and ty_link =
+  | Ln_unbound of Ident.t
+  | Ln_bound of ty
+  | Ln_forward of ty
+  | Ln_marked of ty
 
 and tag_set =
   | Tag_const of raw_tag * refinement * tag_set
-  | Tag_block of raw_tag * refinement * lambda_type list * tag_set
+  | Tag_block of raw_tag * refinement * ty list * tag_set
   | Tag_open
   | Tag_close 
 
@@ -227,8 +234,8 @@ and refinement = Ident.t list * binding list
 
 (** {1 Handling of type errors} *)
 type error =
-  | Not_subtype  of lambda_type * lambda_type
-  | Cant_apply   of lambda_type * lambda_type
+  | Not_subtype  of ty * ty
+  | Cant_apply   of ty * ty
   | Unbound_var  of Ident.t
   | Unbound_tvar of Ident.t
   | Tvar_capture of Ident.t
@@ -237,7 +244,7 @@ type error =
 exception Error of error
 let error err = raise (Error err)
 
-(** {1 Lambda types constructors} *)
+(** {1 Manipulating tagsets} *)
 
 let rec tag_const raw ?(refinement=([],[])) = function
   | Tag_const (n, b, t) when n < raw ->
@@ -272,19 +279,13 @@ let rec tagset_const_shift n = function
 
 type tagset_const_op = [`Eq|`Ne|`Lt|`Gt|`Le|`Ge]
 let tagset_const_op_neg = function
-  |`Eq -> `Ne
-  |`Ne -> `Eq
-  |`Lt -> `Ge
-  |`Gt -> `Le
-  |`Le -> `Gt
-  |`Ge -> `Lt
+  | `Eq -> `Ne | `Ne -> `Eq
+  | `Lt -> `Ge | `Ge -> `Lt
+  | `Gt -> `Le | `Le -> `Gt
 let tagset_const_op_eval = function
-  | `Eq -> (=)
-  | `Ne -> (<>)
-  | `Lt -> (<)
-  | `Gt -> (>)
-  | `Le -> (<=)
-  | `Ge -> (>=)
+  | `Eq -> (=) | `Ne -> (<>)
+  | `Lt -> (<) | `Ge -> (>=)
+  | `Gt -> (>) | `Le -> (<=)
 
 let tagset_const_eval (op : tagset_const_op) rhs tag =
   let id t = t and close _ = Tag_close and rel = tagset_const_op_eval op in
@@ -319,17 +320,29 @@ let rec tagset_match_block c = function
   | Tag_const (_,_,ts) | Tag_block (_,_,_,ts) -> tagset_match_const c ts
   | Tag_open | Tag_close as t -> t
 
-let lt_unit = Lt_tagged (tag_const 0 Tag_close)
+(** {1 Lambda types constructors} *)
 
-let lt_bool = Lt_tagged (tag_const 0 (tag_const 1 Tag_close))
+let ty_unit = Ty_tagged (tag_const 0 Tag_close)
 
-let lt_bot = (* forall A. A *)
+let ty_bool = Ty_tagged (tag_const 0 (tag_const 1 Tag_close))
+
+let ty_bot = (* forall A. A *)
   let tA = Ident.create "A" in
-  Lt_forall ([tA], Lt_var tA)
+  Ty_forall ([tA], Ty_var tA)
 
-let lt_const_int = Lt_const Lt_const_int
-let lt_const_float = Lt_const Lt_const_float
-let lt_TODO = Lt_top
+let ty_const_int = Ty_const Ty_const_int
+let ty_const_float = Ty_const Ty_const_float
+let ty_TODO = Ty_top
+
+let rec ty_repr = function
+    (* Path compression *)
+  | Ty_link ({contents = Ln_bound
+                  (Ty_link {contents = Ln_bound _} as ty)} as v) ->
+    let ty' = ty_repr ty in
+    v := Ln_bound (ty');
+    ty'
+  | Ty_link { contents = Ln_bound ty } -> ty
+  | t -> t
 
 (** {1 Lambda expressions constructors} *)
 
@@ -587,30 +600,30 @@ and sameswitch sw1 sw2 =
    | _ -> false)
 
 and sametype t1 t2 = match t1,t2 with
-  | Lt_top, Lt_top -> true
-  | Lt_var v, Lt_var v' -> Ident.same v v'
-  | Lt_mu (id,t), Lt_mu (id',t') -> Ident.same id id' && sametype t t'
-  | Lt_forall (id,t), Lt_forall (id',t') -> samelist Ident.same id id' && sametype t t'
-  | Lt_exists (id,t), Lt_exists (id',t') -> samelist Ident.same id id' && sametype t t'
+  | Ty_top, Ty_top -> true
+  | Ty_var v, Ty_var v' -> Ident.same v v'
+  | Ty_link l, Ty_link l' -> l == l'
+  | Ty_mu (id,t), Ty_mu (id',t') -> Ident.same id id' && sametype t t'
+  | Ty_forall (id,t), Ty_forall (id',t') -> samelist Ident.same id id' && sametype t t'
+  | Ty_exists (id,t), Ty_exists (id',t') -> samelist Ident.same id id' && sametype t t'
 
-  | Lt_arrow (a,b), Lt_arrow (a',b') -> sametype a a' && sametype b b'
-  | Lt_const c, Lt_const c' -> sametconst c c'
-  | Lt_array t, Lt_array t' -> sametype t t'
-  | Lt_tagged t, Lt_tagged t' -> sametagset t t'
-  | Lt_exn, Lt_exn -> true
-  | Lt_witness None, Lt_witness None -> true
-  | Lt_witness (Some t), Lt_witness (Some t') -> sametype t t'
-  | (Lt_top | Lt_var _ | Lt_mu _ | Lt_forall _ | Lt_exists _ | Lt_arrow _ |
-     Lt_const _ | Lt_array _ | Lt_tagged _ | Lt_witness _ | Lt_exn ), _ -> false
+  | Ty_arrow (a,b), Ty_arrow (a',b') -> sametype a a' && sametype b b'
+  | Ty_const c, Ty_const c' -> sametconst c c'
+  | Ty_array t, Ty_array t' -> sametype t t'
+  | Ty_tagged t, Ty_tagged t' -> sametagset t t'
+  | Ty_exn, Ty_exn -> true
+  | Ty_witness None, Ty_witness None -> true
+  | Ty_witness (Some t), Ty_witness (Some t') -> sametype t t'
+  | (Ty_top | Ty_var _ | Ty_mu _ | Ty_forall _ | Ty_exists _ | Ty_arrow _ | Ty_const _ | Ty_array _ | Ty_tagged _ | Ty_witness _ | Ty_exn | Ty_link _), _ -> false
 
 and sametconst c1 c2 = match c1,c2 with
-  | Lt_const_int      , Lt_const_int      
-  | Lt_const_char     , Lt_const_char
-  | Lt_const_string   , Lt_const_string
-  | Lt_const_float    , Lt_const_float
-  | Lt_const_int32    , Lt_const_int32
-  | Lt_const_int64    , Lt_const_int64
-  | Lt_const_nativeint, Lt_const_nativeint -> true
+  | Ty_const_int      , Ty_const_int      
+  | Ty_const_char     , Ty_const_char
+  | Ty_const_string   , Ty_const_string
+  | Ty_const_float    , Ty_const_float
+  | Ty_const_int32    , Ty_const_int32
+  | Ty_const_int64    , Ty_const_int64
+  | Ty_const_nativeint, Ty_const_nativeint -> true
   | _, _ -> false
 
 and sametagset t1 t2 = match t1, t2 with
@@ -676,6 +689,54 @@ let subst_lambda s lam =
   and subst_case (key, case) = (key, subst case)
   in subst lam
 
+let map_type ?marked f ty =
+  let marked' = match marked with Some m -> m | None -> ref [] in
+  let mark v = match !v with
+    | Ln_bound t | Ln_forward t ->
+      v := Ln_marked t;
+      marked' := v :: !marked'
+    | _ -> ()
+  in
+  let unmark v = match !v with
+    | Ln_marked t -> v := Ln_bound t
+    | _ -> assert false
+  in
+  let rec aux ty = match f ~marked:marked' ty with
+    | Some ty' -> ty'
+    | None -> match ty with
+      | Ty_var _ | Ty_exn | Ty_witness None | Ty_top | Ty_const _ -> ty
+      | Ty_array t          -> Ty_array (aux t)
+      | Ty_witness (Some t) -> Ty_witness (Some (aux t))
+      | Ty_arrow (t1,t2)    -> Ty_arrow (aux t1, aux t2)
+      | Ty_mu (id,t)        -> Ty_mu (id, aux t)
+      | Ty_forall (ids,t)   -> Ty_forall (ids, aux t)
+      | Ty_exists (ids,t)   -> Ty_exists (ids, aux t)
+      | Ty_tagged ts        -> Ty_tagged (tagset ts)
+      | Ty_link v           -> unlink v; ty
+  and unlink v = match !v with
+    | Ln_unbound _ -> ()
+    | Ln_marked _ -> ()
+    | Ln_forward _ -> failwith "occur-check"
+    | Ln_bound t ->
+      v := Ln_forward t;
+      v := Ln_bound (aux t);
+      mark v
+  and tagset = function
+    | Tag_close | Tag_open as c -> c
+    | Tag_const (tag,ref,ts) ->
+      Tag_const (tag, refinement ref, tagset ts)
+    | Tag_block (tag,ref,tys,ts) -> 
+      Tag_block (tag, refinement ref, List.map aux tys, tagset ts)
+  and refinement (ids,bindings) =
+    (ids, List.map (fun (id,ty) -> id, aux ty) bindings)
+  in
+  let ty' = aux ty in
+  begin match marked with
+    | None -> List.iter unmark !marked';
+    | _ -> ()
+  end;
+  ty'
+
 let subst_type s ty =
   let assert_unbound id =
     try
@@ -683,35 +744,25 @@ let subst_type s ty =
       error (Tvar_capture id)
     with Not_found -> ()
   in
-  let rec subst = function
-    | Lt_var id as t ->
-      begin try Ident.find_same id s with Not_found -> t end
-    | Lt_exn | Lt_witness None | Lt_top | Lt_const _ as t -> t
-    | Lt_arrow (t1,t2) -> Lt_arrow (subst t1, subst t2)
-    | Lt_mu (id,t) ->
-      assert_unbound id;
-      Lt_mu (id, subst t)
-    | Lt_array t -> Lt_array (subst t)
-    | Lt_exists (ids,t) ->
-      List.iter assert_unbound ids;
-      Lt_exists (ids, subst t)
-    | Lt_forall (ids,t) ->
-      List.iter assert_unbound ids;
-      Lt_forall (ids, subst t)
-    | Lt_tagged ts -> Lt_tagged (subst_tagset ts)
-    | Lt_witness (Some t)  -> Lt_witness (Some t)
-  and subst_tagset = function
-    | Tag_close | Tag_open as t -> t
-    | Tag_const (t,r,ts) ->
-      Tag_const (t, subst_refinement r, subst_tagset ts)
-    | Tag_block (t,r,p,ts) ->
-      Tag_block (t, subst_refinement r, List.map subst p, subst_tagset ts)
-  and subst_binding (id,t) = id, subst t
-  and subst_refinement (ids,bindings) =
+  let rec subst ~marked = function
+    | Ty_var id ->
+      begin try Some (Ident.find_same id s) with Not_found -> None end
+    | Ty_mu (id,_) ->
+      assert_unbound id; None
+    | Ty_exists (ids,_) | Ty_forall (ids,_) ->
+      List.iter assert_unbound ids; None
+    | Ty_tagged ts -> check_tagset ts; None
+    | _ -> None
+  and check_tagset = function
+    | Tag_close | Tag_open -> ()
+    | Tag_const (_,r,ts) | Tag_block (_,r,_,ts) ->
+      check_ref r;
+      check_tagset ts
+  and check_ref (ids,bindings) =
     List.iter assert_unbound ids;
-    (ids, List.map subst_binding bindings)
+    List.iter (fun (id,_) -> assert_unbound id) bindings
   in
-  subst ty
+  map_type subst ty
 
 (* ************************ *)
 (** {0 Subtyping relation} **)
@@ -719,21 +770,21 @@ let subst_type s ty =
 
 (** Context management *)
 type context = {
-  ctx_vars     : lambda_type Ident.tbl;
-  ctx_catchers : (int * lambda_type list) list;
+  ctx_vars     : ty Ident.tbl;
+  ctx_catchers : (int * ty list) list;
 } 
 
 let context_empty = { ctx_vars = Ident.empty ; ctx_catchers = [] }
 let is_freevar v ctx =
   try match Ident.find_same v ctx.ctx_vars with
-    | Lt_var v' -> Ident.same v v'
+    | Ty_var v' -> Ident.same v v'
     | _ -> false
   with Not_found -> false
 
 let bind_var id tyarg ctx =
   { ctx with ctx_vars = Ident.add id tyarg ctx.ctx_vars }
 
-let bind_freevar id ctx = bind_var id (Lt_var id) ctx
+let bind_freevar id ctx = bind_var id (Ty_var id) ctx
 
 let bind_vars ?(using=bind_var) vars ctx =
   List.fold_left (fun ctx (id,t) -> using id t ctx) ctx vars
@@ -746,7 +797,7 @@ let rec context_refine (ids,bindings) ctx =
       (fun (ctx,tbl) id ->
         let id' = Ident.rename id in
         bind_freevar id' ctx,
-        Ident.add id (Lt_var id') tbl)
+        Ident.add id (Ty_var id') tbl)
       (ctx,Ident.empty) ids
   in
   let bind ctx (id,ty) =
@@ -757,13 +808,13 @@ let rec context_refine (ids,bindings) ctx =
 
 and bind_refine id tyarg ctx =
   match tyarg with
-  | Lt_tagged (Tag_const (c,r,Tag_close)) ->
+  | Ty_tagged (Tag_const (c,r,Tag_close)) ->
     let _, ctx = context_refine r ctx in
-    bind_var id (Lt_tagged (Tag_const (c,([],[]),Tag_close))) ctx
-  | Lt_tagged (Tag_block (c,r,tys,Tag_close)) ->
+    bind_var id (Ty_tagged (Tag_const (c,([],[]),Tag_close))) ctx
+  | Ty_tagged (Tag_block (c,r,tys,Tag_close)) ->
     let tbl, ctx = context_refine r ctx in
     let tys = List.map (subst_type tbl) tys in
-    bind_var id (Lt_tagged (Tag_block (c,([],[]),tys,Tag_close))) ctx
+    bind_var id (Ty_tagged (Tag_block (c,([],[]),tys,Tag_close))) ctx
   | _ -> bind_var id tyarg ctx
 
 and tagset_refine ts ctx = match ts with
@@ -772,7 +823,7 @@ and tagset_refine ts ctx = match ts with
   | _ -> ctx
 
 (** Assumptions management, used to implement subtype relation *)
-module AssumSet = Set.Make(struct type t = Ident.t * lambda_type let compare = compare end)
+module AssumSet = Set.Make(struct type t = Ident.t * ty let compare = compare end)
 type assumptions = {
   as_l  : AssumSet.t; 
   as_r  : AssumSet.t;
@@ -793,17 +844,17 @@ let rec compare_type ~subtype ~assum ~ctx t1 t2 =
   let compare_type ?(assum=assum) ?(ctx=ctx) ?(subtype=subtype) t1 t2 =
     compare_type ~subtype ~assum ~ctx t1 t2
   in
-  match t1,t2 with
-  | _, Lt_top when subtype -> ()
-  | Lt_top, Lt_top -> ()
+  match ty_repr t1, ty_repr t2 with
+  | _, Ty_top when subtype -> ()
+  | Ty_top, Ty_top -> ()
 
-  | Lt_var v1, Lt_var v2 when Ident.same v1 v2
+  | Ty_var v1, Ty_var v2 when Ident.same v1 v2
                            && is_freevar v1 ctx ->
     ()
 
-  | Lt_var v, t when assuming_l v t assum -> ()
-  | t, Lt_var v when assuming_r t v assum -> ()
-  | Lt_var id, t2 when not (is_freevar id ctx) ->
+  | Ty_var v, t when assuming_l v t assum -> ()
+  | t, Ty_var v when assuming_r t v assum -> ()
+  | Ty_var id, t2 when not (is_freevar id ctx) ->
     begin match 
         try Some (Ident.find_same id ctx.ctx_vars)
         with Not_found -> None
@@ -811,7 +862,7 @@ let rec compare_type ~subtype ~assum ~ctx t1 t2 =
       | None -> error (Unbound_tvar id)
       | Some t1 -> compare_type ~assum:(assum_l id t2 assum) t1 t2
     end
-  | t1, Lt_var id when not (is_freevar id ctx) ->
+  | t1, Ty_var id when not (is_freevar id ctx) ->
     begin match 
         try Some (Ident.find_same id ctx.ctx_vars)
         with Not_found -> None
@@ -820,56 +871,59 @@ let rec compare_type ~subtype ~assum ~ctx t1 t2 =
       | Some t2 -> compare_type ~assum:(assum_r t1 id assum) t1 t2
     end
 
-  | t1, Lt_mu (id,t2) -> 
+  | t1, Ty_mu (id,t2) -> 
     compare_type ~ctx:(bind_var id t2 ctx) t1 t2
-  | Lt_mu (id,t1), t2 -> 
+  | Ty_mu (id,t1), t2 -> 
     compare_type ~ctx:(bind_var id t1 ctx) t1 t2
 
-  | Lt_arrow (a1,a2), Lt_arrow (b1,b2) ->
+  | Ty_arrow (a1,a2), Ty_arrow (b1,b2) ->
     compare_type b1 a1;
     compare_type b2 a2
 
-  | Lt_tagged s1, Lt_tagged s2 ->
+  | Ty_tagged s1, Ty_tagged s2 ->
     compare_tagset ~subtype ~assum ~ctx s1 s2
 
-  | Lt_const c1, Lt_const c2 when sametconst c1 c2 ->  ()
+  | Ty_const c1, Ty_const c2 when sametconst c1 c2 ->  ()
 
-  | Lt_array t1, Lt_array t2 ->
+  | Ty_array t1, Ty_array t2 ->
     (* Array are invariant, …slow implementation *)
     compare_type ~subtype:false t1 t2;
 
-  | Lt_forall (idl1,t1), Lt_forall (idl2,t2)
+  | Ty_forall (idl1,t1), Ty_forall (idl2,t2)
     when List.length idl1 = List.length idl2 ->
     let ctx = List.fold_left2
         (fun ctx id1 id2 ->
           let id' = Ident.rename id1 in
-          bind_var id1 (Lt_var id')
-            (bind_var id2 (Lt_var id')
+          bind_var id1 (Ty_var id')
+            (bind_var id2 (Ty_var id')
             (bind_freevar id' ctx)))
         ctx idl1 idl2
     in
     compare_type ~ctx t1 t2
 
-  | Lt_exists (idl1,t1), Lt_exists (idl2,t2)
+  | Ty_exists (idl1,t1), Ty_exists (idl2,t2)
     when List.length idl1 = List.length idl2 ->
     let ctx = List.fold_left2
         (fun ctx id1 id2 ->
           let id' = Ident.rename id1 in
-          bind_var id1 (Lt_var id')
-            (bind_var id2 (Lt_var id')
+          bind_var id1 (Ty_var id')
+            (bind_var id2 (Ty_var id')
             (bind_freevar id' ctx)))
         ctx idl1 idl2
     in
     compare_type ~ctx t1 t2
 
-  | Lt_exn, Lt_exn -> ()
-  | Lt_witness None, Lt_witness None -> ()
-  | Lt_witness (Some t1), Lt_witness (Some t2) ->
+  | Ty_exn, Ty_exn -> ()
+  | Ty_witness None, Ty_witness None -> ()
+  | Ty_witness (Some t1), Ty_witness (Some t2) ->
     compare_type t1 t2
 
-  | Lt_top, _ 
-  | (Lt_var _ | Lt_const _ | Lt_tagged _ | Lt_forall _ | Lt_exists _ |
-     Lt_arrow _ | Lt_array _ | Lt_exn | Lt_witness _), _ ->
+  | Ty_link {contents=Ln_bound _}, _ | _, Ty_link {contents=Ln_bound _} ->
+    assert false
+
+  | Ty_top, _ 
+  | (Ty_var _ | Ty_const _ | Ty_tagged _ | Ty_forall _ | Ty_exists _ |
+     Ty_arrow _ | Ty_array _ | Ty_exn | Ty_witness _), _ ->
     error (Not_subtype (t1,t2))
 
 and compare_tagset ~subtype ~assum ~ctx s1 s2 =
@@ -897,7 +951,7 @@ and compare_tagset ~subtype ~assum ~ctx s1 s2 =
   | Tag_block (_, _, _, _), Tag_const (_, _, s2') when subtype ->
     compare_tagset s1 s2'
 
-  | _, _ -> error (Not_subtype (Lt_tagged s1, Lt_tagged s2))
+  | _, _ -> error (Not_subtype (Ty_tagged s1, Ty_tagged s2))
 
 and compare_refinement ~subtype ~assum ~ctx r1 r2 = match r1,r2 with
   | (ids,p), ([],[]) when subtype ->
@@ -906,7 +960,7 @@ and compare_refinement ~subtype ~assum ~ctx r1 r2 = match r1,r2 with
   | (ids1,binds1), (ids2,binds2)
     when List.length ids1 = List.length ids2 ->
     let vars  = List.map Ident.rename ids1 in
-    let tvars = List.map (fun i -> Lt_var i) vars in
+    let tvars = List.map (fun i -> Ty_var i) vars in
     let ctx = List.fold_right bind_freevar vars ctx in
     let ctx = List.fold_right2 bind_var ids1 tvars ctx in
     let ctx = List.fold_right2 bind_var ids2 tvars ctx in
@@ -946,28 +1000,28 @@ let (<:?) t1 t2 ~ctx =
 (* ************************************* *)
 
 let typeof_const = function
-  | Const_int    _ -> Lt_const_int
-  | Const_char   _ -> Lt_const_char
-  | Const_string _ -> Lt_const_string
-  | Const_float  _ -> Lt_const_float
-  | Const_int32  _ -> Lt_const_int32
-  | Const_int64  _ -> Lt_const_int64
-  | Const_nativeint _ ->  Lt_const_nativeint
+  | Const_int    _ -> Ty_const_int
+  | Const_char   _ -> Ty_const_char
+  | Const_string _ -> Ty_const_string
+  | Const_float  _ -> Ty_const_float
+  | Const_int32  _ -> Ty_const_int32
+  | Const_int64  _ -> Ty_const_int64
+  | Const_nativeint _ ->  Ty_const_nativeint
 
 let rec typeof_sconst = function
-  | Const_base        c -> Lt_const (typeof_const c)
-  | Const_pointer     i -> Lt_tagged (tag_const i Tag_close)
+  | Const_base        c -> Ty_const (typeof_const c)
+  | Const_pointer     i -> Ty_tagged (tag_const i Tag_close)
   | Const_block       (i,scs) -> 
-    Lt_tagged (tag_block i (List.map typeof_sconst scs) Tag_close)
-  | Const_float_array _ -> Lt_array (Lt_const Lt_const_float)
-  | Const_immstring _ -> (Lt_const Lt_const_string)
+    Ty_tagged (tag_block i (List.map typeof_sconst scs) Tag_close)
+  | Const_float_array _ -> Ty_array (Ty_const Ty_const_float)
+  | Const_immstring _ -> (Ty_const Ty_const_string)
 
 
 let rec typeof_prim ctx prim targs = match prim, targs with
-  | Pidentity, [t] -> lt_bot
-  | Pignore, [t] -> lt_unit
-  | Prevapply _, [targ;Lt_arrow (targ',tres)] 
-  | Pdirapply _, [Lt_arrow (targ',tres);targ] ->
+  | Pidentity, [t] -> ty_bot
+  | Pignore, [t] -> ty_unit
+  | Prevapply _, [targ;Ty_arrow (targ',tres)] 
+  | Pdirapply _, [Ty_arrow (targ',tres);targ] ->
     (targ <: targ') ~ctx;
     tres
   (* Globals *)
@@ -980,45 +1034,45 @@ let rec typeof_prim ctx prim targs = match prim, targs with
       with Not_found -> error (Fail "Unbound global")
     in
     (targ <: ty) ~ctx;
-    lt_unit
+    ty_unit
   (* Operations on heap blocks *)
   | Pmakeblock (tag,_), targs ->
-    Lt_tagged (tag_block tag targs Tag_close) 
-  | Pfield i, [Lt_tagged (Tag_block (_, _, fields, Tag_close))] ->
+    Ty_tagged (tag_block tag targs Tag_close) 
+  | Pfield i, [Ty_tagged (Tag_block (_, _, fields, Tag_close))] ->
     (try List.nth fields i 
      with Failure _ -> error (Fail "invalid field primitive"))
-  | Psetfield (i,_), [Lt_tagged (Tag_block (_, _, fields, Tag_close)); tval] ->
+  | Psetfield (i,_), [Ty_tagged (Tag_block (_, _, fields, Tag_close)); tval] ->
     let tfield =
       try List.nth fields i 
       with Failure _ -> error (Fail "invalid field primitive")
     in
     (tval <: tfield) ~ctx;
-    lt_unit
+    ty_unit
   | (Pfield _, [_] | Psetfield _, [_;_]) ->
     error (Fail "invalid field primitive")
 
-  | Pfloatfield i, [Lt_tagged (Tag_block (_, _, fields, Tag_close))] ->
+  | Pfloatfield i, [Ty_tagged (Tag_block (_, _, fields, Tag_close))] ->
     let t = List.nth fields i in
-    (lt_const_float <: t) ~ctx;
+    (ty_const_float <: t) ~ctx;
     t
-  | Psetfloatfield i, [Lt_tagged (Tag_block (_, _, fields, Tag_close)); tval] ->
+  | Psetfloatfield i, [Ty_tagged (Tag_block (_, _, fields, Tag_close)); tval] ->
     let t =
       try List.nth fields i 
       with Failure _ -> error (Fail "invalid field primitive")
     in
-    (t <: lt_const_float) ~ctx;
-    lt_unit
+    (t <: ty_const_float) ~ctx;
+    ty_unit
   | (Pfloatfield _, [_] | Psetfloatfield _, [_;_]) ->
     error (Fail "invalid field primitive")
 
   | Pduprecord (Types.Record_regular,size), 
-    [Lt_tagged (Tag_block (_, _, fields, Tag_close)) as ty] 
+    [Ty_tagged (Tag_block (_, _, fields, Tag_close)) as ty] 
     when List.length fields = size ->
     ty
   | Pduprecord (Types.Record_float,size), 
-    [Lt_tagged (Tag_block (_, _, fields, Tag_close)) as ty] 
+    [Ty_tagged (Tag_block (_, _, fields, Tag_close)) as ty] 
     when List.length fields = size
-      && List.for_all ((<:?) lt_const_float ~ctx) fields ->
+      && List.for_all ((<:?) ty_const_float ~ctx) fields ->
     ty
 
   (* Force lazy values, breaks some assumptions,
@@ -1026,14 +1080,14 @@ let rec typeof_prim ctx prim targs = match prim, targs with
   | Plazyforce, [targ] ->
     begin match targ with
       | _ -> failwith "TODO"
-             (*| Lt_block { lt_blocks = [tag, [Lt_arrow(targ,tres)]] }
+             (*| Ty_block { ty_blocks = [tag, [Ty_arrow(targ,tres)]] }
                when tag = Obj.lazy_tag ->
-               assert_subtype ctx targ lt_unit;
+               assert_subtype ctx targ ty_unit;
                tres
-               | Lt_block { lt_blocks = [tag, [p0]] }
+               | Ty_block { ty_blocks = [tag, [p0]] }
                when tag = Obj.forward_tag ->
                p0
-               | Lt_block { lt_blocks = lst }
+               | Ty_block { ty_blocks = lst }
                when List.exists 
                    (fun (t,_) -> Obj.(t = lazy_tag || t = forward_tag))
                    lst ->
@@ -1043,30 +1097,30 @@ let rec typeof_prim ctx prim targs = match prim, targs with
 
   (* External call *)
   | Pccall prim, targs when prim.Primitive.prim_arity = List.length targs ->
-    lt_bot
+    ty_bot
 
   (* Exceptions *)
   | Praise, [e] ->
-    lt_bot
+    ty_bot
 
   (* Boolean operations *)
   | (Psequand | Psequor), [a;b]
-    when (a <:? lt_bool) ~ctx
-      && (b <:? lt_bool) ~ctx ->
-    lt_bool
-  | Pnot, [a] when (a <:? lt_bool) ~ctx ->
-    lt_bool
+    when (a <:? ty_bool) ~ctx
+      && (b <:? ty_bool) ~ctx ->
+    ty_bool
+  | Pnot, [a] when (a <:? ty_bool) ~ctx ->
+    ty_bool
 
   (* Integer operations *)
   | (Paddint | Psubint | Pmulint | Pdivint | Pmodint |
      Pandint | Porint  | Pxorint | Plslint | Plsrint | Pasrint),
-    [a;b] when (a <:? lt_const_int) ~ctx  
-            && (b <:? lt_const_int) ~ctx ->
-    lt_const_int
-  | Pnegint, [a] when (a <:? lt_const_int) ~ctx ->
-    lt_const_int
-  | Pintcomp _, [a] when (a <:? lt_const_int) ~ctx ->
-    lt_bool
+    [a;b] when (a <:? ty_const_int) ~ctx  
+            && (b <:? ty_const_int) ~ctx ->
+    ty_const_int
+  | Pnegint, [a] when (a <:? ty_const_int) ~ctx ->
+    ty_const_int
+  | Pintcomp _, [a] when (a <:? ty_const_int) ~ctx ->
+    ty_bool
   | _ -> failwith "TODO: unhandled primitive"
 
 (*| Poffsetint i -> failwith "TODO"
@@ -1122,7 +1176,7 @@ and typeof ctx = function
     let tapp ty arg =
       let targ = typeof ctx arg in
       match ty with
-      | Lt_arrow (targ',tres) ->
+      | Ty_arrow (targ',tres) ->
         (targ <: targ') ~ctx;
         tres
       | _ -> error (Fail "expecting function")
@@ -1130,12 +1184,12 @@ and typeof ctx = function
     List.fold_left tapp tfun args
   | Lfunction (Curried,args,body) ->
     let tbody = typeof (bind_vars ~using:bind_refine args ctx) body in
-    List.fold_right (fun (_,targ) tres -> Lt_arrow (targ,tres))
+    List.fold_right (fun (_,targ) tres -> Ty_arrow (targ,tres))
       args tbody
   | Lfunction (Tupled,args,body) ->
     let tbody = typeof (bind_vars ~using:bind_refine args ctx) body in
     let targs = List.map snd args in
-    Lt_arrow (Lt_tagged (tag_block 0 targs Tag_close), tbody)
+    Ty_arrow (Ty_tagged (tag_block 0 targs Tag_close), tbody)
   | Llet (_,id,expr,body) ->
     let texpr = typeof ctx expr in
     typeof (bind_refine id texpr ctx) body 
@@ -1152,21 +1206,21 @@ and typeof ctx = function
     typeof_prim ctx p targs
   | Ltrywith (expr,id,handler) ->
     let texpr = typeof ctx expr in
-    let thandler = typeof (bind_var id Lt_exn ctx) handler in
+    let thandler = typeof (bind_var id Ty_exn ctx) handler in
     (thandler <: texpr) ~ctx;
     texpr
   | Lsequence (l1,l2) ->
-    (typeof ctx l1 <: Lt_top) ~ctx;
+    (typeof ctx l1 <: Ty_top) ~ctx;
     typeof ctx l2
   | Lwhile (lcond,lbody) ->
-    (typeof ctx lcond <: lt_bool) ~ctx;
-    (typeof ctx lbody <: Lt_top) ~ctx;
-    lt_unit
+    (typeof ctx lcond <: ty_bool) ~ctx;
+    (typeof ctx lbody <: Ty_top) ~ctx;
+    ty_unit
   | Lfor (id,llo,lhi,_,lbody) ->
-    (typeof ctx llo <: lt_const_int) ~ctx;
-    (typeof ctx lhi <: lt_const_int) ~ctx;
-    (typeof (bind_var id lt_const_int ctx) lbody <: Lt_top) ~ctx;
-    lt_unit
+    (typeof ctx llo <: ty_const_int) ~ctx;
+    (typeof ctx lhi <: ty_const_int) ~ctx;
+    (typeof (bind_var id ty_const_int ctx) lbody <: Ty_top) ~ctx;
+    ty_unit
   | Lassign (var,lval) ->
     let tvar =
       try Ident.find_same var ctx.ctx_vars
@@ -1174,22 +1228,22 @@ and typeof ctx = function
     and tval = typeof ctx lval
     in
     (tval <: tvar) ~ctx;
-    lt_unit
+    ty_unit
   | Ltypeabs (ids,lam) ->
     let ids' = List.map Ident.rename ids in
     let aux ctx id id' =
-      bind_var id (Lt_var id') (bind_freevar id ctx)
+      bind_var id (Ty_var id') (bind_freevar id ctx)
     in
     let ctx = List.fold_left2 aux ctx ids ids' in
     let tlam = typeof ctx lam in
-    Lt_forall (ids', tlam)
+    Ty_forall (ids', tlam)
   | Ltypeapp (lam,tys) ->
     let tlam = typeof ctx lam in
     begin match tlam with
-      | Lt_forall (ids,lt) when List.length ids = List.length tys ->
+      | Ty_forall (ids,lt) when List.length ids = List.length tys ->
         let s = List.fold_right2 Ident.add ids tys Ident.empty in
         subst_type s lt
-      | Lt_forall _ -> error (Fail "type application: incorrect arity")
+      | Ty_forall _ -> error (Fail "type application: incorrect arity")
       | _ -> error (Fail "type application: expecting forall") 
     end
   | Lascribe (l,t) ->
@@ -1200,9 +1254,9 @@ and typeof ctx = function
 
   | Lifthenelse (lcond,lthen,lelse) ->
     let tcond = typeof ctx lcond in 
-    (tcond <: lt_bool) ~ctx;
+    (tcond <: ty_bool) ~ctx;
     begin match tcond with
-      | Lt_tagged ts ->
+      | Ty_tagged ts ->
         let rthen, relse = tagset_apply `Ne 0 ts in
         let tthen = typeof (tagset_refine rthen ctx) lthen 
         and telse = typeof (tagset_refine relse ctx) lelse 
@@ -1223,7 +1277,7 @@ and typeof ctx = function
         error (Fail "unknown tag in staticraise")
     in
     List.iter2 ((<:) ~ctx) targs texpected;
-    lt_bot
+    ty_bot
 
   | Lstaticcatch (expr, id, bindings, handler) ->
     let texpr = typeof (bind_catcher id (List.map snd bindings) ctx) expr in
@@ -1235,20 +1289,20 @@ and typeof ctx = function
     let tagset =
       match try Ident.find_same v ctx.ctx_vars
             with Not_found -> error (Unbound_var v)
-      with Lt_tagged ts -> ts
+      with Ty_tagged ts -> ts
          | _ -> error (Fail "switch on non-tagged type")
     in
     let case_const (tag,body) =
       let tagset = tagset_match_const tag tagset in
       let ctx = tagset_refine tagset ctx in
-      let ctx = bind_var v (Lt_tagged tagset) ctx in
+      let ctx = bind_var v (Ty_tagged tagset) ctx in
       let tbody = typeof ctx body in
       (tbody <: ty) ~ctx
     in
     let case_block (tag,body) =
       let tagset = tagset_match_block tag tagset in
       let ctx = tagset_refine tagset ctx in
-      let ctx = bind_var v (Lt_tagged tagset) ctx in
+      let ctx = bind_var v (Ty_tagged tagset) ctx in
       let tbody = typeof ctx body in
       (tbody <: ty) ~ctx
     in

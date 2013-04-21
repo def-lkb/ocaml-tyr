@@ -154,7 +154,7 @@ type lambda =
   | Llet of let_kind * Ident.t * lambda * lambda
   | Lletrec of (binding * lambda) list * lambda
   | Lprim of primitive * lambda list
-  | Lswitch of Ident.t * lambda_switch * lambda_type
+  | Lswitch of Ident.t * lambda_switch * ty
   | Lstaticraise of raw_tag * lambda list
   | Lstaticcatch of lambda * raw_tag * binding list * lambda
   | Ltrywith of lambda * Ident.t * lambda
@@ -167,10 +167,10 @@ type lambda =
   | Levent of lambda * lambda_event
   | Lifused of Ident.t * lambda
   | Ltypeabs of Ident.t list * lambda
-  | Ltypeapp of lambda * lambda_type list
-  | Lascribe of lambda * lambda_type
+  | Ltypeapp of lambda * ty list
+  | Lascribe of lambda * ty
 
-and binding = Ident.t * lambda_type
+and binding = Ident.t * ty
 
 and lambda_switch = {
   sw_numconsts  : int;                  (* Number of integer cases *)
@@ -195,25 +195,25 @@ and lambda_event_kind =
 
 (** {1 Types of lambda language} *)
 
-and lambda_type = 
+and ty = 
   | Lt_top
   | Lt_var    of Ident.t
-  | Lt_mu     of Ident.t * lambda_type
-  | Lt_forall of Ident.t list * lambda_type
-  | Lt_exists of Ident.t list * lambda_type
+  | Lt_mu     of Ident.t * ty
+  | Lt_forall of Ident.t list * ty
+  | Lt_exists of Ident.t list * ty
 
-  | Lt_arrow  of lambda_type * lambda_type
-  | Lt_const  of lambda_type_const
-  | Lt_array  of lambda_type
+  | Lt_arrow  of ty * ty
+  | Lt_const  of ty_const
+  | Lt_array  of ty
 
   (* Structured values *)
   | Lt_tagged  of tag_set
 
   (* Exceptions *)
   | Lt_exn
-  | Lt_witness of lambda_type option
+  | Lt_witness of ty option
 
-and lambda_type_const =
+and ty_const =
   | Lt_const_int
   | Lt_const_char
   | Lt_const_string
@@ -224,7 +224,7 @@ and lambda_type_const =
 
 and tag_set =
   | Tag_const of raw_tag * refinement * tag_set
-  | Tag_block of raw_tag * refinement * lambda_type list * tag_set
+  | Tag_block of raw_tag * refinement * ty list * tag_set
   | Tag_open
   | Tag_close 
 
@@ -237,8 +237,8 @@ and refinement = Ident.t list * binding list
 
 (** {1 Handling of type errors} *)
 type error =
-  | Not_subtype  of lambda_type * lambda_type
-  | Cant_apply   of lambda_type * lambda_type
+  | Not_subtype  of ty * ty
+  | Cant_apply   of ty * ty
   | Unbound_var  of Ident.t
   | Unbound_tvar of Ident.t
   | Tvar_capture of Ident.t
@@ -251,7 +251,7 @@ exception Error of error
 (** {1 Lambda expressions constructors} *)
 
 val switch_alias: ?name:string -> lambda -> lambda_switch -> 
-  lambda_type -> lambda
+  ty -> lambda
 
 val const_unit       : structured_constant
 val lambda_unit      : lambda
@@ -260,12 +260,12 @@ val name_lambda_list : lambda list -> (lambda list -> lambda) -> lambda
 val proj_binding     : binding * 'a -> Ident.t * 'a
 val proj_bindings    : (binding * 'a) list -> (Ident.t * 'a) list
 
-val lt_unit        : lambda_type
-val lt_bool        : lambda_type
-val lt_bot         : lambda_type
-val lt_const_int   : lambda_type
-val lt_const_float : lambda_type
-val lt_TODO        : lambda_type
+val lt_unit        : ty
+val lt_bool        : ty
+val lt_bot         : ty
+val lt_const_int   : ty
+val lt_const_float : ty
+val lt_TODO        : ty
 
 (** {1 Iterate through lambda} *)
 val iter : (lambda -> unit) -> lambda -> unit
@@ -303,14 +303,14 @@ val patch_guarded : lambda -> lambda -> lambda
 (* ************************************************* *)
 
 val same      : lambda -> lambda -> bool
-val same_type : lambda_type -> lambda_type -> bool
+val same_type : ty -> ty -> bool
 
 (* *************************************************** *)
 (** {0 Variable substitution on expression and types} **)
 (* *************************************************** *)
 
 val subst_lambda : lambda Ident.tbl -> lambda -> lambda
-val subst_type   : lambda_type Ident.tbl -> lambda_type -> lambda_type
+val subst_type   : ty Ident.tbl -> ty -> ty
 
 (* ************************ *)
 (** {0 Subtyping relation} **)
@@ -318,19 +318,19 @@ val subst_type   : lambda_type Ident.tbl -> lambda_type -> lambda_type
 
 type context
 val context_empty : context 
-val bind_var  : Ident.t -> lambda_type -> context -> context
+val bind_var  : Ident.t -> ty -> context -> context
 val bind_freevar : Ident.t -> context -> context
-val bind_vars : ?using:(Ident.t -> lambda_type -> context -> context) ->
-    (Ident.t * lambda_type) list -> context -> context
+val bind_vars : ?using:(Ident.t -> ty -> context -> context) ->
+    (Ident.t * ty) list -> context -> context
 
-val (<:) : lambda_type -> lambda_type -> ctx:context -> unit
-val (<:?) : lambda_type -> lambda_type -> ctx:context -> bool
+val (<:) : ty -> ty -> ctx:context -> unit
+val (<:?) : ty -> ty -> ctx:context -> bool
 
 (* ************************************* *)
 (** {0 Type-checking lambda expression} **)
 (* ************************************* *)
 
-val typeof_const  : constant -> lambda_type_const
-val typeof_sconst : structured_constant -> lambda_type
+val typeof_const  : constant -> ty_const
+val typeof_sconst : structured_constant -> ty
 
-val typeof : context -> lambda -> lambda_type
+val typeof : context -> lambda -> ty
