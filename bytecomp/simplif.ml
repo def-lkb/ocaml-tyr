@@ -58,8 +58,8 @@ let rec eliminate_ref id = function
          | Some l -> Some (eliminate_ref id l)} ty
   | Lstaticraise (i,args) ->
       Lstaticraise (i,List.map (eliminate_ref id) args)
-  | Lstaticcatch(e1, i, e2) ->
-      Lstaticcatch(eliminate_ref id e1, i, eliminate_ref id e2)
+  | Lstaticcatch(e1, i, b, e2) ->
+      Lstaticcatch(eliminate_ref id e1, i, b, eliminate_ref id e2)
   | Ltrywith(e1, v, e2) ->
       Ltrywith(eliminate_ref id e1, v, eliminate_ref id e2)
   | Lifthenelse(e1, e2, e3) ->
@@ -124,7 +124,7 @@ let simplify_exits lam =
       List.iter (fun (_, l) -> count l) sw.sw_consts;
       List.iter (fun (_, l) -> count l) sw.sw_blocks
   | Lstaticraise (i,ls) -> incr_exit i ; List.iter count ls
-  | Lstaticcatch (l1,(i,[]),Lstaticraise (j,[])) ->
+  | Lstaticcatch (l1,i,[],Lstaticraise (j,[])) ->
       (* i will be replaced by j in l1, so each occurence of i in l1
          increases j's ref count *)
       count l1 ;
@@ -135,7 +135,7 @@ let simplify_exits lam =
       | Not_found ->
           Hashtbl.add exits j (ref ic)
       end
-  | Lstaticcatch(l1, (i,_), l2) ->
+  | Lstaticcatch(l1,i,_,l2) ->
       count l1;
       (* If l1 does not contain (exit i),
          l2 will be removed, so don't count its exits *)
@@ -249,24 +249,24 @@ let simplify_exits lam =
       with
       | Not_found -> Lstaticraise (i,ls)
       end
-  | Lstaticcatch (l1,(i,[]),(Lstaticraise (j,[]) as l2)) ->
+  | Lstaticcatch (l1,i,[],(Lstaticraise (j,[]) as l2)) ->
       Hashtbl.add subst i ([],simplif l2) ;
       simplif l1
-  | Lstaticcatch (l1,(i,xs), (Lvar _ as l2)) ->
+  | Lstaticcatch (l1, i, xs, (Lvar _ as l2)) ->
       begin match count_exit i with
       | 0 -> simplif l1
       | _ ->
           Hashtbl.add subst i (List.map fst xs,l2) ;
           simplif l1
       end
-  | Lstaticcatch (l1,(i,xs),l2) ->
+  | Lstaticcatch (l1, i, xs, l2) ->
       begin match count_exit i with
       | 0 -> simplif l1
       | 1 ->
           Hashtbl.add subst i (List.map fst xs,simplif l2) ;
           simplif l1
       | _ ->
-          Lstaticcatch (simplif l1, (i,xs), simplif l2)
+          Lstaticcatch (simplif l1, i, xs, simplif l2)
       end
   | Ltrywith(l1, v, l2) -> Ltrywith(simplif l1, v, simplif l2)
   | Lifthenelse(l1, l2, l3) -> Lifthenelse(simplif l1, simplif l2, simplif l3)
@@ -375,7 +375,7 @@ let simplify_lets lam =
       List.iter (fun (_, l) -> count bv l) sw.sw_consts;
       List.iter (fun (_, l) -> count bv l) sw.sw_blocks
   | Lstaticraise (i,ls) -> List.iter (count bv) ls
-  | Lstaticcatch(l1, (i,_), l2) -> count bv l1; count bv l2
+  | Lstaticcatch(l1,i,_,l2) -> count bv l1; count bv l2
   | Ltrywith(l1, v, l2) -> count bv l1; count bv l2
   | Lifthenelse(l1, l2, l3) -> count bv l1; count bv l2; count bv l3
   | Lsequence(l1, l2) -> count bv l1; count bv l2
@@ -476,8 +476,8 @@ let simplify_lets lam =
                  sw_failaction = new_fail} ty
   | Lstaticraise (i,ls) ->
       Lstaticraise (i, List.map simplif ls)
-  | Lstaticcatch(l1, (i,args), l2) ->
-      Lstaticcatch (simplif l1, (i,args), simplif l2)
+  | Lstaticcatch(l1, i, args, l2) ->
+      Lstaticcatch (simplif l1, i, args, simplif l2)
   | Ltrywith(l1, v, l2) -> Ltrywith(simplif l1, v, simplif l2)
   | Lifthenelse(l1, l2, l3) -> Lifthenelse(simplif l1, simplif l2, simplif l3)
   | Lsequence(Lifused(v, l1), l2) ->
@@ -539,7 +539,7 @@ let rec emit_tail_infos is_tail lambda =
       list_emit_tail_infos_fun snd is_tail sw.sw_blocks
   | Lstaticraise (_, l) ->
       list_emit_tail_infos false l
-  | Lstaticcatch (body, _, handler) ->
+  | Lstaticcatch (body, _, _, handler) ->
       emit_tail_infos is_tail body;
       emit_tail_infos is_tail handler
   | Ltrywith (body, _, handler) ->

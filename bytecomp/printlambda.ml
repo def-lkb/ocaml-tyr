@@ -200,53 +200,83 @@ let primitive ppf = function
   | Pbigarrayset(unsafe, n, kind, layout) ->
       print_bigarray ppf "set" unsafe n kind layout
 
-let print_list ?first ?(delim="") ?last printer ppf = function
-  | [] -> ()
+let print_list ?empty ?first ?delim ?last printer ppf = function
+  | [] -> (match empty with Some (f,a) -> f ppf a | None -> ())
   | hd :: tl ->
-      (match first with Some s -> pp_print_string ppf s | None -> ());
-      printer ppf hd;
-      List.iter (fprintf ppf "%s@%a" delim printer) tl;
-      (match last with Some s -> pp_print_string ppf s | None -> ())
+    (match first with
+     | Some (f,a) -> f ppf a | None -> ());
+    printer ppf hd;
+    List.iter (fun item ->
+      (match delim with Some (f,a) -> f ppf a | None -> ());
+      fprintf ppf "@%a" printer item)
+      tl;
+    (match last with 
+     | Some (f,a) -> f ppf a | None -> ())
+
+let ppf_space = (fprintf, ("@ " : (_,_,_) format))
 
 let lam_ty_const = function
-  | Lt_const_int       -> "int"
-  | Lt_const_char      -> "char"
-  | Lt_const_string    -> "string"
-  | Lt_const_float     -> "float"
-  | Lt_const_int32     -> "int32"
-  | Lt_const_int64     -> "int64"
-  | Lt_const_nativeint -> "nativeint"
+  | Ty_const_int       -> "int"
+  | Ty_const_char      -> "char"
+  | Ty_const_string    -> "string"
+  | Ty_const_float     -> "float"
+  | Ty_const_int32     -> "int32"
+  | Ty_const_int64     -> "int64"
+  | Ty_const_nativeint -> "nativeint"
 
 let rec lam_ty ppf = function
-  | Lt_top -> fprintf ppf "(top)"
-  | Lt_arrow (t1,t2) -> fprintf ppf "(%a -> %a)" lam_ty t1 lam_ty t2
-  | Lt_var id -> Ident.print ppf id
-  | Lt_const c -> pp_print_string ppf (lam_ty_const c)
-  | Lt_array t -> fprintf ppf "(array %a)" lam_ty t
-  | Lt_mu (id, t) -> fprintf ppf "(mu %a %a)" Ident.print id lam_ty t
-  | Lt_forall (ids, t) -> 
-    fprintf ppf "(forall (%a) %a)"
-      (print_list ~delim:" " Ident.print) ids
+  | Ty_top -> fprintf ppf "(top)"
+  | Ty_arrow (t1,t2) -> fprintf ppf "(%a -> %a)" lam_ty t1 lam_ty t2
+  | Ty_var id -> Ident.print ppf id
+  | Ty_const c -> pp_print_string ppf (lam_ty_const c)
+  | Ty_mu (id, t) -> fprintf ppf "(mu@ %a %a)" Ident.print id lam_ty t
+  | Ty_forall (ids, t) -> 
+    fprintf ppf "(forall@ (%a)@ %a)"
+      (print_list ~delim:ppf_space Ident.print) ids
       lam_ty t
-  | Lt_exn -> fprintf ppf "(exn)"
-  | Lt_tagged tagset  -> 
-    fprintf ppf "(block%a)"
+  | Ty_tagged tagset -> 
+    fprintf ppf "(tagged@%a)"
       lam_tagset tagset 
+    (* Unification variables *)
+  | Ty_link ln -> 
+    begin match ln_repr ln with
+      | Ln_bound (id,ty) ->
+        fprintf ppf "(tyvar@ %a@ :@ %a)" Ident.print id lam_ty ty
+      | Ln_unbound id ->
+        fprintf ppf "(tyvar@ %a)" Ident.print id
+    end 
 
-and lam_tagset ppf = function
-  | Tag_close -> ()
-  | Tag_open  -> fprintf ppf " ..."
-  | Tag_const (c,r,ts') ->
-  | Tag_block (c,r,tys,ts') -> 
+and lam_tagset ppf = 
+  function
+  | Tag_close -> fprintf ppf " close"
+  | Tag_open  -> fprintf ppf " open"
+  | Tag_const (tag,cstr,ts') ->
+    fprintf ppf " (const[%d]@%a)@%a" tag
+      lam_constraints cstr lam_tagset ts'
+  | Tag_block (tag,cstr,tys,ts') -> 
+    fprintf ppf " (block[%d]@%a@ %a)@%a" tag
+      lam_constraints cstr 
+      (print_list
+       ~delim:ppf_space
+       lam_ty)
+      tys
+      lam_tagset ts'
 
-and lam_refinement ppf (exists,bindings) =
-  let print_binding (id,ty) = 
-    fprintf ppf " (%a@ %a)" Ident.print id lam_ty ty;
-  in
-  match exists with
-  | 
-  |
-;; 
+and lam_constraints ppf (exists,bindings) =
+  let binding ppf (id,ty) = 
+    fprintf ppf " (%a@ =@ %a)" Ident.print id lam_ty ty in
+  fprintf ppf "%a@%a"
+    (print_list
+       ~first:(Format.fprintf,"exists@ (")
+       ~delim:ppf_space
+       ~last:(Format.fprintf,")")
+       Ident.print)
+    exists
+    (print_list
+       ~delim:ppf_space
+       binding)
+    bindings
+
 let rec lam ppf = function
   | Lvar id ->
       Ident.print ppf id
@@ -260,7 +290,7 @@ let rec lam ppf = function
       let pr_params ppf params =
         match kind with
         | Curried ->
-            List.iter (fun (id,ty) -> fprintf ppf "@ (%a : %a)" Ident.print id lam_ty ty) params
+            List.iter (fun (id,ty) -> fprintf ppf "@ (%a@ :@ %a)" Ident.print id lam_ty ty) params
         | Tupled ->
             fprintf ppf " (";
             let first = ref true in
@@ -294,7 +324,7 @@ let rec lam ppf = function
           (fun ((id,ty), l) ->
             if !spc then fprintf ppf "@ " else spc := true;
             fprintf ppf "@[<2>(%a@ :@ %a)@ %a@]" 
-              Ident.print id  lam_ty ty  lam l)
+              Ident.print id lam_ty ty  lam l)
           id_arg_list in
       fprintf ppf
         "@[<2>(letrec@ (@[<hv 1>%a@])@ %a)@]" bindings id_arg_list lam body
@@ -333,10 +363,10 @@ let rec lam ppf = function
       let lams ppf largs =
         List.iter (fun l -> fprintf ppf "@ %a" lam l) largs in
       fprintf ppf "@[<2>(exit[%d]%a)@]" i lams ls;
-  | Lstaticcatch(lbody, (i, bindings), lhandler) ->
+  | Lstaticcatch(lbody, i, bindings, lhandler) ->
       fprintf ppf "@[<2>(catch@ %a@;<1 -1>with[%d]%a@ %a)@]"
         lam lbody i
-        (print_list ~delim:" "
+        (print_list ~delim:(Format.fprintf, " ")
            (fun ppf (id,ty) ->
              fprintf ppf "(%a@ :@ %a)@" Ident.print id lam_ty ty))
           bindings
@@ -382,12 +412,12 @@ let rec lam ppf = function
 
   | Ltypeabs (ids, l) ->
     fprintf ppf "@[<2>(typeabs@ (%a)@ %a)@]"
-      (print_list ~delim:" " Ident.print) ids
+      (print_list ~delim:ppf_space Ident.print) ids
       lam l
   | Ltypeapp (l, tys) ->
     fprintf ppf "@[<2>(typeapply@ %a@%a)@]"
       lam l
-      (print_list ~first:" " ~delim:" " lam_ty) tys
+      (print_list ~first:ppf_space ~delim:ppf_space lam_ty) tys
 
   | Lascribe (l, ty) ->
     fprintf ppf "@[<2>(%a@ :@ %a)@]"

@@ -1386,7 +1386,7 @@ let inline_lazy_force_switch arg loc =
                  [ (Obj.forward_tag, Lprim(Pfield 0, [varg]));
                    (Obj.lazy_tag,
                     Lapply(force_fun, [varg], loc)) ];
-               sw_failaction = Some varg },lt_TODO))))
+               sw_failaction = Some varg }, ty_TODO))))
 
 let inline_lazy_force =
   if !Clflags.native_code then
@@ -1639,7 +1639,7 @@ let make_switch_switcher arg cases acts =
   switch_alias arg
    {sw_numconsts = Array.length cases ; sw_consts = !l ;
     sw_numblocks = 0 ; sw_blocks =  []  ;
-    sw_failaction = None} lt_TODO
+    sw_failaction = None} ty_TODO
 
 let full sw =
   List.length sw.sw_consts = sw.sw_numconsts &&
@@ -1675,10 +1675,10 @@ let make_switch (arg,sw) = match sw.sw_failaction with
           sw_consts = remove sw.sw_consts ;
           sw_blocks = remove sw.sw_blocks ;
           sw_failaction = Some (Lstaticraise (default,[]))}
-         lt_TODO
+         ty_TODO
     else
-      switch_alias arg sw lt_TODO
-| _ -> switch_alias arg sw lt_TODO
+      switch_alias arg sw ty_TODO
+| _ -> switch_alias arg sw ty_TODO
 
 module SArg = struct
   type primitive = Lambda.primitive
@@ -2243,14 +2243,14 @@ let compile_orhandlers compile_fun lambda1 total1 ctx to_catch =
                 do_rec r total_r rem
           | _ ->
               do_rec
-                (Lstaticcatch (r,(i,List.map (fun v -> v,lt_TODO) vars), handler_i))
+                (Lstaticcatch (r,i,List.map (fun v -> v,ty_TODO) vars, handler_i))
                 (jumps_union
                    (jumps_remove i total_r)
                    (jumps_map (ctx_rshift_num (ncols mat)) total_i))
               rem
         with
         | Unused ->
-            do_rec (Lstaticcatch (r, (i,List.map (fun v -> v,lt_TODO) vars), lambda_unit)) total_r rem
+            do_rec (Lstaticcatch (r, i,List.map (fun v -> v,ty_TODO) vars, lambda_unit)) total_r rem
         end in
   do_rec lambda1 total1 to_catch
 
@@ -2342,12 +2342,12 @@ let rec comp_match_handlers comp_fun partial ctx arg first_match next_matchs =
                       (match rem with [] -> partial | _ -> Partial)
                       ctx_i arg pm in
                   c_rec
-                    (Lstaticcatch (body,(i,[]),li))
+                    (Lstaticcatch (body,i,[],li))
                     (jumps_union total_i total_rem)
                     rem
                 with
                 | Unused ->
-                    c_rec (Lstaticcatch (body,(i,[]),lambda_unit))
+                    c_rec (Lstaticcatch (body,i,[],lambda_unit))
                       total_rem  rem
             end in
    try
@@ -2507,7 +2507,7 @@ let check_total total lambda i handler_fun =
   if jumps_is_empty total then
     lambda
   else begin
-    Lstaticcatch(lambda, (i,[]), handler_fun())
+    Lstaticcatch(lambda, i,[], handler_fun())
   end
 
 let compile_matching loc repr handler_fun arg pat_act_list partial =

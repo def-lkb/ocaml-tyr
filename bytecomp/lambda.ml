@@ -192,18 +192,17 @@ and ty =
   | Ty_link   of ty_link ref
   | Ty_mu     of Ident.t * ty
   | Ty_forall of Ident.t list * ty
-  | Ty_exists of Ident.t list * ty
 
   | Ty_arrow  of ty * ty
   | Ty_const  of ty_const
-  | Ty_array  of ty
+  (*| Ty_array  of ty*)
 
   (* Structured values *)
   | Ty_tagged  of tag_set
 
   (* Exceptions *)
-  | Ty_exn
-  | Ty_witness of ty option
+  (*| Ty_exn
+    | Ty_witness of ty option*)
 
 and ty_const =
   | Ty_const_int
@@ -219,12 +218,13 @@ and ty_link =
   | Ln_bound of Ident.t * ty
 
 and tag_set =
-  | Tag_const of raw_tag * refinement * tag_set
-  | Tag_block of raw_tag * refinement * ty list * tag_set
+  | Tag_const of raw_tag * constraints * tag_set
+  | Tag_block of raw_tag * constraints * ty list * tag_set
   | Tag_open
   | Tag_close 
 
-and refinement = Ident.t list * binding list
+and constraints =
+  (*Free variables*)Ident.t list * (*Equality constraints*)binding list
 
 (* ********************************* *)
 (** {0 General purpose definitions} **)
@@ -244,21 +244,21 @@ let error err = raise (Error err)
 
 (** {1 Manipulating tagsets} *)
 
-let rec tag_const raw ?(refinement=([],[])) = function
+let rec tag_const raw ?(constraints=([],[])) = function
   | Tag_const (n, b, t) when n < raw ->
-    Tag_const (n, b, tag_const raw ~refinement t)
+    Tag_const (n, b, tag_const raw ~constraints t)
   | Tag_const (n, _, _) when n = raw ->
     failwith "Conflicting tag"
-  | t -> Tag_const (raw, refinement, t)
+  | t -> Tag_const (raw, constraints, t)
 
-let rec tag_block raw ?(refinement=([],[])) tys = function
+let rec tag_block raw ?(constraints=([],[])) tys = function
   | Tag_const (n, b, t) ->
-    Tag_const (n, b, tag_block raw ~refinement tys t)
+    Tag_const (n, b, tag_block raw ~constraints tys t)
   | Tag_block (n, b, p, t) when n < raw ->
-    Tag_block (n, b, p, tag_block raw ~refinement tys t)
+    Tag_block (n, b, p, tag_block raw ~constraints tys t)
   | Tag_block (n, _, _, _) when n = raw ->
     failwith "Conflicting tag"
-  | t -> Tag_block (raw, refinement, tys, t)
+  | t -> Tag_block (raw, constraints, tys, t)
 
 let rec assert_wellformed_tagset = function
   | Tag_close | Tag_open
@@ -607,18 +607,12 @@ and sametype t1 t2 = match t1,t2 with
   | Ty_link l, Ty_link l' -> l == l'
   | Ty_mu (id,t), Ty_mu (id',t') -> Ident.same id id' && sametype t t'
   | Ty_forall (id,t), Ty_forall (id',t') -> samelist Ident.same id id' && sametype t t'
-  | Ty_exists (id,t), Ty_exists (id',t') -> samelist Ident.same id id' && sametype t t'
 
   | Ty_arrow (a,b), Ty_arrow (a',b') -> sametype a a' && sametype b b'
   | Ty_const c, Ty_const c' -> sametconst c c'
-  | Ty_array t, Ty_array t' -> sametype t t'
   | Ty_tagged t, Ty_tagged t' -> sametagset t t'
-  | Ty_exn, Ty_exn -> true
-  | Ty_witness None, Ty_witness None -> true
-  | Ty_witness (Some t), Ty_witness (Some t') -> sametype t t'
-  | (Ty_top | Ty_var _ | Ty_mu _ | Ty_forall _ | Ty_exists _
-    | Ty_arrow _ | Ty_const _ | Ty_array _ | Ty_tagged _ | Ty_witness _ 
-    | Ty_exn | Ty_link _), _ -> false
+  | (Ty_top | Ty_var _ | Ty_mu _ | Ty_forall _ | Ty_arrow _ | Ty_const _ | Ty_tagged _ |
+     Ty_link _), _ -> false
 
 and sametconst c1 c2 = match c1,c2 with
   | Ty_const_int      , Ty_const_int      
@@ -633,14 +627,14 @@ and sametconst c1 c2 = match c1,c2 with
 and sametagset t1 t2 = match t1, t2 with
   | Tag_open, Tag_open | Tag_close, Tag_close -> true
   | Tag_const (n1,r1,t1), Tag_const (n2,r2,t2) ->
-    n1 = n2 && samerefinement r1 r2 && sametagset t1 t2
+    n1 = n2 && sameconstraints r1 r2 && sametagset t1 t2
   | Tag_block (n1,r1,p1,t1), Tag_block (n2,r2,p2,t2) ->
-    n1 = n2 && samerefinement r1 r2 &&
+    n1 = n2 && sameconstraints r1 r2 &&
     samelist sametype p1 p2 && sametagset t1 t2
   | _, _ -> false
 
 and samebinding b1 b2 = samepair Ident.same sametype b1 b2
-and samerefinement r1 r2 =
+and sameconstraints r1 r2 =
   samepair (samelist Ident.same) (samelist samebinding) r1 r2
 
 let same_type = sametype
@@ -697,13 +691,10 @@ let map_type ?(marked=ref IdentSet.empty) f ty =
   let rec aux ty = match f ~marked ty with
     | Some ty' -> ty'
     | None -> match ty with
-      | Ty_var _ | Ty_exn | Ty_witness None | Ty_top | Ty_const _ -> ty
-      | Ty_array t          -> Ty_array (aux t)
-      | Ty_witness (Some t) -> Ty_witness (Some (aux t))
+      | Ty_var _ | Ty_top | Ty_const _ -> ty
       | Ty_arrow (t1,t2)    -> Ty_arrow (aux t1, aux t2)
       | Ty_mu (id,t)        -> Ty_mu (id, aux t)
       | Ty_forall (ids,t)   -> Ty_forall (ids, aux t)
-      | Ty_exists (ids,t)   -> Ty_exists (ids, aux t)
       | Ty_tagged ts        -> Ty_tagged (tagset ts)
       | Ty_link v           -> unlink v; ty
   and unlink v = match !v with
@@ -714,10 +705,10 @@ let map_type ?(marked=ref IdentSet.empty) f ty =
   and tagset = function
     | Tag_close | Tag_open as c -> c
     | Tag_const (tag,ref,ts) ->
-      Tag_const (tag, refinement ref, tagset ts)
+      Tag_const (tag, constraints ref, tagset ts)
     | Tag_block (tag,ref,tys,ts) -> 
-      Tag_block (tag, refinement ref, List.map aux tys, tagset ts)
-  and refinement (ids,bindings) =
+      Tag_block (tag, constraints ref, List.map aux tys, tagset ts)
+  and constraints (ids,bindings) =
     (ids, List.map (fun (id,ty) -> id, aux ty) bindings)
   in
   aux ty
@@ -734,7 +725,7 @@ let subst_type s ty =
       begin try Some (Ident.find_same id s) with Not_found -> None end
     | Ty_mu (id,_) ->
       assert_unbound id; None
-    | Ty_exists (ids,_) | Ty_forall (ids,_) ->
+    | Ty_forall (ids,_) ->
       List.iter assert_unbound ids; None
     | Ty_tagged ts -> check_tagset ts; None
     | _ -> None
@@ -863,7 +854,7 @@ let assum_r t id assum = { assum with as_r = AssumSet.add (id,t) assum.as_r }
 
 let rec unify ~assum ~ctx ta tb =
   match ta,tb with
-  | Ty_top, Ty_top | Ty_exn, Ty_exn | Ty_witness None, Ty_witness None -> ()
+  | Ty_top, Ty_top -> ()
   | Ty_var v, t | t, Ty_var v when AssumSet.mem (v,t) assum -> ()
 
   | Ty_var v, t | t, Ty_var v when is_bound v ctx.ctx_vars ->
@@ -879,7 +870,6 @@ let rec unify ~assum ~ctx ta tb =
     unify ~assum ~ctx:(bind_var id def ctx) def t
 
   | Ty_forall (ids1,t1), Ty_forall (ids2,t2)
-  | Ty_exists (ids1,t1), Ty_exists (ids2,t2)
     when List.length ids1 = List.length ids2 ->
     let links = List.map fresh_link ids1 in
     let tys = List.map (fun ln -> Ty_link ln) links in
@@ -900,8 +890,6 @@ let rec unify ~assum ~ctx ta tb =
 
   | Ty_const c1, Ty_const c2 when sametconst c1 c2 -> ()
 
-  | Ty_array t1, Ty_array t2 -> unify ~assum ~ctx t1 t2
-
   | Ty_tagged ts1, Ty_tagged ts2 -> unify_tagset ~assum ~ctx ts1 ts2
 
   | _ -> error (Fail "can't unify")
@@ -916,18 +904,18 @@ and unify_link ~assum ~ctx ln ty = match ln_repr ln with
 and unify_tagset ~assum ~ctx ts1 ts2 = match ts1,ts2 with
   | Tag_close, Tag_close | Tag_open, Tag_open -> ()
   | Tag_const (c1,r1,ts1'), Tag_const (c2,r2,ts2') when c1 = c2 ->
-    ignore (unify_refinements ~assum ~ctx r1 r2);
+    ignore (unify_constraints ~assum ~ctx r1 r2);
     unify_tagset ~assum ~ctx ts1' ts2'
 
   | Tag_block (c1,r1,p1,ts1'), Tag_block (c2,r2,p2,ts2') 
     when c1 = c2 && List.length p1 = List.length p2 ->
-    let lazy refinements = unify_refinements ~assum ~ctx r1 r2 in
-    let ctx = refine_context ~assum ~ctx refinements in
+    let lazy constraintss = unify_constraints ~assum ~ctx r1 r2 in
+    let ctx = refine_context ~assum ~ctx constraintss in
     List.iter2 (unify ~assum ~ctx) p1 p2
 
   | _ -> error (Fail "can't unify")
 
-and unify_refinements ~assum ~ctx (ids1,binds1) (ids2,binds2) =
+and unify_constraints ~assum ~ctx (ids1,binds1) (ids2,binds2) =
   let ids  = ids1 @ ids2 in
   let ids' = List.map Ident.rename ids in
   let freshnames = foldl IdentSet.add ids' IdentSet.empty in
@@ -959,7 +947,7 @@ and unify_refinements ~assum ~ctx (ids1,binds1) (ids2,binds2) =
   in
   (freevars, bindings))
 
-and refine_context ~assum ~ctx (ids,bindings as refinement) =
+and refine_context ~assum ~ctx (ids,bindings as constraints) =
   let conflicting = list_filter_map
       (fun (id,ty) -> try 
           Some (id, Ident.find_same id ctx.ctx_vars)
@@ -985,20 +973,19 @@ and refine_context ~assum ~ctx (ids,bindings as refinement) =
   let freshnames =
     ident_fold (fun id _ -> IdentSet.add id) !variables IdentSet.empty
   in
-  let lazy (freevars, refinement') = unify_refinements ~assum ~ctx
+  let lazy (freevars, constraints') = unify_constraints ~assum ~ctx
       ([],conflicting)
-      refinement
+      constraints
   in
-  let refinement' = list_assoc_map (map_type (close_type freshnames)) refinement' in
-  foldl (fun (id,ty) -> bind_var id ty) refinement' ctx
+  let constraints' = list_assoc_map (map_type (close_type freshnames)) constraints' in
+  foldl (fun (id,ty) -> bind_var id ty) constraints' ctx
 
 
 (* ************************ *)
 (** {0 Subtyping relation} **)
 (* ************************ *)
 
-
-let rec compare_type ~subtype ~assum ~ctx t1 t2 =
+(*let rec compare_type ~subtype ~assum ~ctx t1 t2 =
   let compare_type ?(assum=assum) ?(ctx=ctx) ?(subtype=subtype) t1 t2 =
     compare_type ~subtype ~assum ~ctx t1 t2
   in
@@ -1043,10 +1030,6 @@ let rec compare_type ~subtype ~assum ~ctx t1 t2 =
 
   | Ty_const c1, Ty_const c2 when sametconst c1 c2 ->  ()
 
-  | Ty_array t1, Ty_array t2 ->
-    (* Array are invariant, …slow implementation *)
-    compare_type ~subtype:false t1 t2;
-
   | Ty_forall (idl1,t1), Ty_forall (idl2,t2)
     when List.length idl1 = List.length idl2 ->
     let ctx = List.fold_left2
@@ -1059,29 +1042,11 @@ let rec compare_type ~subtype ~assum ~ctx t1 t2 =
     in
     compare_type ~ctx t1 t2
 
-  | Ty_exists (idl1,t1), Ty_exists (idl2,t2)
-    when List.length idl1 = List.length idl2 ->
-    let ctx = List.fold_left2
-        (fun ctx id1 id2 ->
-          let id' = Ident.rename id1 in
-          bind_var id1 (Ty_var id')
-            (bind_var id2 (Ty_var id')
-            (bind_freevar id' ctx)))
-        ctx idl1 idl2
-    in
-    compare_type ~ctx t1 t2
-
-  | Ty_exn, Ty_exn -> ()
-  | Ty_witness None, Ty_witness None -> ()
-  | Ty_witness (Some t1), Ty_witness (Some t2) ->
-    compare_type t1 t2
-
   | Ty_link {contents=Ln_bound _}, _ | _, Ty_link {contents=Ln_bound _} ->
     assert false
 
   | Ty_top, _ 
-  | (Ty_var _ | Ty_const _ | Ty_tagged _ | Ty_forall _ | Ty_exists _ |
-     Ty_arrow _ | Ty_array _ | Ty_exn | Ty_witness _), _ ->
+  | (Ty_var _ | Ty_const _ | Ty_tagged _ | Ty_forall _ | Ty_arrow _), _ ->
     error (Not_subtype (t1,t2))
 
 and compare_tagset ~subtype ~assum ~ctx s1 s2 =
@@ -1091,12 +1056,12 @@ and compare_tagset ~subtype ~assum ~ctx s1 s2 =
   | Tag_open, Tag_open | Tag_close, Tag_close -> ()
 
   | Tag_const (c1, r1, s1'), Tag_const (c2, r2, s2') when c1 = c2 ->
-    ignore (compare_refinement ~subtype ~assum ~ctx r1 r2);
+    ignore (compare_constraints ~subtype ~assum ~ctx r1 r2);
     compare_tagset s1' s2'
 
   | Tag_block (c1, r1, p1, s1'), Tag_block (c2, r2, p2, s2')
     when c1 = c2 && List.length p1 = List.length p2 ->
-    let ctx = compare_refinement ~subtype ~assum ~ctx r1 r2 in
+    let ctx = compare_constraints ~subtype ~assum ~ctx r1 r2 in
     List.iter2 (compare_type ~subtype ~assum ~ctx) p1 p2;
     compare_tagset s1' s2'
 
@@ -1111,7 +1076,7 @@ and compare_tagset ~subtype ~assum ~ctx s1 s2 =
 
   | _, _ -> error (Not_subtype (Ty_tagged s1, Ty_tagged s2))
 
-and compare_refinement ~subtype ~assum ~ctx r1 r2 = match r1,r2 with
+and compare_constraints ~subtype ~assum ~ctx r1 r2 = match r1,r2 with
   | (ids,p), ([],[]) when subtype ->
     snd (context_refine r1 ctx)
 
@@ -1131,7 +1096,7 @@ and compare_refinement ~subtype ~assum ~ctx r1 r2 = match r1,r2 with
 
       | (id1,_) :: b1', (id2,_) :: _ when id1 < id2 && subtype -> aux b1' b2
       | _, [] when subtype -> ()
-      | _, _ -> error (Fail "missing binding in refinement")
+      | _, _ -> error (Fail "missing binding in constraints")
     in
     aux (sort binds1) (sort binds2);
     let tbl = Ident.empty in
@@ -1141,7 +1106,7 @@ and compare_refinement ~subtype ~assum ~ctx r1 r2 = match r1,r2 with
       bind_refine id (subst_type tbl ty) ctx in
     List.fold_left bind ctx binds1
 
-  | _, _ -> error (Fail "incompatible refinement")
+  | _, _ -> error (Fail "incompatible constraints")
 
 
 let (<:) t1 t2 ~ctx =
@@ -1467,4 +1432,4 @@ and typeof ctx = function
     List.iter case_const sw.sw_consts;
     List.iter case_block sw.sw_blocks;
     ty
-
+*)

@@ -196,39 +196,43 @@ and lambda_event_kind =
 (** {1 Types of lambda language} *)
 
 and ty = 
-  | Lt_top
-  | Lt_var    of Ident.t
-  | Lt_mu     of Ident.t * ty
-  | Lt_forall of Ident.t list * ty
-  | Lt_exists of Ident.t list * ty
+  | Ty_top
+  | Ty_var    of Ident.t
+  | Ty_link   of ty_link ref
+  | Ty_mu     of Ident.t * ty
+  | Ty_forall of Ident.t list * ty
 
-  | Lt_arrow  of ty * ty
-  | Lt_const  of ty_const
-  | Lt_array  of ty
+  | Ty_arrow  of ty * ty
+  | Ty_const  of ty_const
+  (*| Ty_array  of ty*)
 
   (* Structured values *)
-  | Lt_tagged  of tag_set
+  | Ty_tagged  of tag_set
 
   (* Exceptions *)
-  | Lt_exn
-  | Lt_witness of ty option
+  (*| Ty_exn
+    | Ty_witness of ty option*)
 
 and ty_const =
-  | Lt_const_int
-  | Lt_const_char
-  | Lt_const_string
-  | Lt_const_float
-  | Lt_const_int32
-  | Lt_const_int64
-  | Lt_const_nativeint
+  | Ty_const_int
+  | Ty_const_char
+  | Ty_const_string
+  | Ty_const_float
+  | Ty_const_int32
+  | Ty_const_int64
+  | Ty_const_nativeint
+
+and ty_link =
+  | Ln_unbound of Ident.t
+  | Ln_bound of Ident.t * ty
 
 and tag_set =
-  | Tag_const of raw_tag * refinement * tag_set
-  | Tag_block of raw_tag * refinement * ty list * tag_set
+  | Tag_const of raw_tag * constraints * tag_set
+  | Tag_block of raw_tag * constraints * ty list * tag_set
   | Tag_open
   | Tag_close 
 
-and refinement = Ident.t list * binding list
+and constraints = Ident.t list * binding list
 
 
 (* ********************************* *)
@@ -248,6 +252,16 @@ exception Error of error
 
 (** {1 Lambda types constructors} *)
 
+val ty_unit : ty
+val ty_bool : ty
+val ty_bot  : ty
+val ty_const_int : ty
+val ty_const_float : ty
+val ty_TODO : ty
+
+val ln_repr : ty_link ref -> ty_link
+val ty_repr : ty -> ty
+
 (** {1 Lambda expressions constructors} *)
 
 val switch_alias: ?name:string -> lambda -> lambda_switch -> 
@@ -260,12 +274,12 @@ val name_lambda_list : lambda list -> (lambda list -> lambda) -> lambda
 val proj_binding     : binding * 'a -> Ident.t * 'a
 val proj_bindings    : (binding * 'a) list -> (Ident.t * 'a) list
 
-val lt_unit        : ty
+(*val lt_unit        : ty
 val lt_bool        : ty
 val lt_bot         : ty
 val lt_const_int   : ty
 val lt_const_float : ty
-val lt_TODO        : ty
+val lt_TODO        : ty*)
 
 (** {1 Iterate through lambda} *)
 val iter : (lambda -> unit) -> lambda -> unit
@@ -316,7 +330,7 @@ val subst_type   : ty Ident.tbl -> ty -> ty
 (** {0 Subtyping relation} **)
 (* ************************ *)
 
-type context
+(*type context
 val context_empty : context 
 val bind_var  : Ident.t -> ty -> context -> context
 val bind_freevar : Ident.t -> context -> context
@@ -324,13 +338,13 @@ val bind_vars : ?using:(Ident.t -> ty -> context -> context) ->
     (Ident.t * ty) list -> context -> context
 
 val (<:) : ty -> ty -> ctx:context -> unit
-val (<:?) : ty -> ty -> ctx:context -> bool
+val (<:?) : ty -> ty -> ctx:context -> bool*)
 
 (* ************************************* *)
 (** {0 Type-checking lambda expression} **)
 (* ************************************* *)
 
-val typeof_const  : constant -> ty_const
+(*val typeof_const  : constant -> ty_const
 val typeof_sconst : structured_constant -> ty
 
-val typeof : context -> lambda -> ty
+val typeof : context -> lambda -> ty*)

@@ -2,50 +2,68 @@ open Lambda
 open Lambdaparser_def
 
 let type_const_of_string = function
-  | "int"       -> Lt_const_int      
-  | "char"      -> Lt_const_char     
-  | "string"    -> Lt_const_string   
-  | "float"     -> Lt_const_float    
-  | "int32"     -> Lt_const_int32    
-  | "int64"     -> Lt_const_int64    
-  | "nativeint" -> Lt_const_nativeint
+  | "int"       -> Ty_const_int      
+  | "char"      -> Ty_const_char     
+  | "string"    -> Ty_const_string   
+  | "float"     -> Ty_const_float    
+  | "int32"     -> Ty_const_int32    
+  | "int64"     -> Ty_const_int64    
+  | "nativeint" -> Ty_const_nativeint
   | _ -> failwith "Unknown type constant"
 
 let rec type_of_tree = function
   | List (_,[Symbol "top"]) ->
-    Lt_top
-  | List (_,[Symbol "exn"]) ->
-    lt_top_block
+    Ty_top
   | List (_,[ta; Symbol "->"; tb]) ->
-    Lt_arrow (type_of_tree ta, type_of_tree tb)
-  | List (_,[Symbol "array"; t]) ->
-    Lt_array (type_of_tree t)
+    Ty_arrow (type_of_tree ta, type_of_tree tb)
   | List (_,[Symbol "mu"; Ident v; t]) ->
-    Lt_mu (v, type_of_tree t)
+    Ty_mu (v, type_of_tree t)
   | List (_,[Symbol "forall"; List (_,idents); t]) ->
     let extract_param = function
       | Ident i -> i
       | _ -> failwith "Invalid 'forall'"
     in
     let idents = List.map extract_param idents in
-    Lt_forall (idents, type_of_tree t)
-  | List (_,Symbol "block" :: tags) ->
-    let rec aux consts blocks = function
-      | [] -> consts, blocks
-      | Const (Const_base (Asttypes.Const_int i)) :: rest ->
-        aux (i :: consts) blocks rest
-      | List (_,(Const (Const_pointer i) :: Colon :: tys)) :: rest ->
-        aux consts ((i, List.map type_of_tree tys) :: blocks) rest
-      | _ -> failwith "Invalid 'block'"
-    in 
-    let lt_consts, lt_blocks = aux [] [] tags in
-    Lt_block { lt_consts ; lt_blocks }
+    Ty_forall (idents, type_of_tree t)
+  | List (_,Symbol "tagged" :: tagset) ->
+    Ty_tagged (tagset_of_list tagset)
   | Ident i ->
-    Lt_var i
+    Ty_var i
   | Symbol s ->
-    Lt_const (type_const_of_string s)
+    Ty_const (type_const_of_string s)
   | _ -> failwith "Unrecognized type"
 
+and tagset_of_list = function
+  | [Symbol "close"] -> Tag_close
+  | [Symbol "open"]  -> Tag_open
+  | List (_,PSymbol ("const",[PInt tag]) :: args) :: tail ->
+    let constraints, args = constraints_of_list args in
+    if args <> [] then failwith "Invalid const definition";
+    Tag_const (tag, constraints, tagset_of_list tail)
+  | List (_,PSymbol ("block",[PInt tag]) :: args) :: tail ->
+    let constraints, args = constraints_of_list args in
+    Tag_block (tag, constraints, 
+               List.map type_of_tree args, tagset_of_list tail)
+  | _ -> failwith "invalid tagset"
+
+and constraints_of_list = function
+  | Symbol "exists" :: List (_,idents) :: tail ->
+    let bindings, tail = bindings_of_list [] tail in
+    (idents_of_list idents, bindings), tail
+  | tail -> 
+    let bindings, tail = bindings_of_list [] tail in
+    ([], bindings), tail
+
+and bindings_of_list acc = function
+  | List (_,[Ident i ; Symbol "="; ty]) :: tail ->
+    bindings_of_list ((i, type_of_tree ty) :: acc) tail
+  | tail ->
+    List.rev acc, tail
+
+and idents_of_list = function
+  | Ident i :: tail -> i :: idents_of_list tail
+  | [] -> []
+  | _ -> failwith "invalid idents list"
 
 let function_split arguments = 
   let extract_param = function
@@ -89,7 +107,7 @@ let rec lambda_of_tree = function
     let k = let_kind k in
     let rec aux = function
       | (Ident i :: expr :: rest) ->
-          Llet (k, i, lambda_of_tree expr, aux rest)
+        Llet (k, i, lambda_of_tree expr, aux rest)
       | [] -> lambda_of_tree body
       | _ -> failwith "Invalid 'let' binding"
     in
@@ -97,20 +115,20 @@ let rec lambda_of_tree = function
   | List (_,[Symbol "letrec" ; List (_,vars) ; body]) ->
     let rec aux = function
       | (List (_,[Ident i ; Colon ; ty]) :: expr :: rest) ->
-         ((i,type_of_tree ty), lambda_of_tree expr) :: aux rest 
+        ((i,type_of_tree ty), lambda_of_tree expr) :: aux rest 
       | [] -> []
       | _ -> failwith "Invalid 'letrec' binding"
     in
     Lletrec (aux vars, lambda_of_tree body)
   | List (_, PSymbol (("switch*"|"switch"), 
-          [PInt sw_numconsts; PInt sw_numblocks]) :: (Ident id) :: cases) ->
+                      [PInt sw_numconsts; PInt sw_numblocks]) :: (Ident id) :: cases) ->
     let rec aux consts blocks failaction = function
       | PSymbol ("case", [PString "int"; PInt i]) :: handler :: rest ->
-          aux ((i, lambda_of_tree handler) :: consts) blocks failaction rest
+        aux ((i, lambda_of_tree handler) :: consts) blocks failaction rest
       | PSymbol ("case", [PString "tag"; PInt i]) :: handler :: rest ->
-          aux consts ((i, lambda_of_tree handler) :: blocks) failaction rest
+        aux consts ((i, lambda_of_tree handler) :: blocks) failaction rest
       | Symbol "default:" :: handler :: rest ->
-          aux consts blocks (Some (lambda_of_tree handler)) rest
+        aux consts blocks (Some (lambda_of_tree handler)) rest
       | [Colon; ty] -> List.rev consts, List.rev blocks, failaction, ty
       | _ -> failwith "Invalid 'switch' binding"
     in
@@ -148,7 +166,7 @@ let rec lambda_of_tree = function
     Lstaticraise (i,List.map lambda_of_tree lams)
   | List (_, Symbol "catch" :: lbody :: PSymbol ("with",[PInt i]) :: tail) ->
     let vars, handler = catch_handler tail in
-    Lstaticcatch (lambda_of_tree lbody, (i, vars), lambda_of_tree handler)
+    Lstaticcatch (lambda_of_tree lbody, i, vars, lambda_of_tree handler)
 
   | List (_, [Symbol "typeabs"; List (_,idents); lam]) ->
     let extract_param = function
@@ -164,10 +182,10 @@ let rec lambda_of_tree = function
 
   | List (_, [lam ; Colon ; ty]) ->
     let lam = lambda_of_tree lam and
-        ty  = type_of_tree ty    in
+      ty  = type_of_tree ty    in
     Lascribe (lam,ty)
 
-  (* TODO: Lsend, Levent, Lifused *)
+(* TODO: Lsend, Levent, Lifused *)
   | List (_, Symbol prim :: args) ->
     Lprim (get_prim prim, List.map lambda_of_tree args)
   | List (_, PSymbol (prim,params) :: args) ->

@@ -371,10 +371,10 @@ let transl_primitive loc p =
   match prim with
     Plazyforce ->
       let parm = Ident.create "prim" in
-      Lfunction(Curried, [parm,lt_TODO], Matching.inline_lazy_force (Lvar parm) Location.none)
+      Lfunction(Curried, [parm,ty_TODO], Matching.inline_lazy_force (Lvar parm) Location.none)
   | _ ->
       let rec make_params n =
-        if n <= 0 then [] else (Ident.create "prim", lt_TODO) :: make_params (n-1) in
+        if n <= 0 then [] else (Ident.create "prim", ty_TODO) :: make_params (n-1) in
       let params = make_params p.prim_arity in
       Lfunction(Curried, params, Lprim(prim, List.map (fun (id,ty) -> Lvar id) params))
 
@@ -579,11 +579,11 @@ and transl_exp0 e =
       if public_send || p.prim_name = "%sendself" then
         let kind = if public_send then Public else Self in
         let obj = Ident.create "obj" and meth = Ident.create "meth" in
-        Lfunction(Curried, [obj,lt_TODO; meth,lt_TODO], Lsend(kind, Lvar meth, Lvar obj, [], e.exp_loc))
+        Lfunction(Curried, [obj,ty_TODO; meth,ty_TODO], Lsend(kind, Lvar meth, Lvar obj, [], e.exp_loc))
       else if p.prim_name = "%sendcache" then
         let obj = Ident.create "obj" and meth = Ident.create "meth" in
         let cache = Ident.create "cache" and pos = Ident.create "pos" in
-        Lfunction(Curried, [obj,lt_TODO; meth,lt_TODO; cache,lt_TODO; pos,lt_TODO],
+        Lfunction(Curried, [obj,ty_TODO; meth,ty_TODO; cache,ty_TODO; pos,ty_TODO],
                   Lsend(Cached, Lvar meth, Lvar obj, [Lvar cache; Lvar pos], e.exp_loc))
       else
         transl_primitive e.exp_loc p
@@ -825,7 +825,7 @@ and transl_exp0 e =
           end
       (* other cases compile to a lazy block holding a function *)
       | _ ->
-          let fn = Lfunction (Curried, [Ident.create "param", lt_TODO], transl_exp e) in
+          let fn = Lfunction (Curried, [Ident.create "param", ty_TODO], transl_exp e) in
           Lprim(Pmakeblock(Config.lazy_tag, Immutable), [fn])
       end
   | Texp_object (cs, meths) ->
@@ -882,11 +882,11 @@ and transl_apply lam sargs loc =
         let body =
           match build_apply handle ((Lvar id_arg, optional)::args') l with
             Lfunction(Curried, ids, lam) ->
-              Lfunction(Curried, (id_arg,lt_TODO)::ids, lam)
+              Lfunction(Curried, (id_arg,ty_TODO)::ids, lam)
           | Levent(Lfunction(Curried, ids, lam), _) ->
-              Lfunction(Curried, (id_arg,lt_TODO)::ids, lam)
+              Lfunction(Curried, (id_arg,ty_TODO)::ids, lam)
           | lam ->
-              Lfunction(Curried, [id_arg,lt_TODO], lam)
+              Lfunction(Curried, [id_arg,ty_TODO], lam)
         in
         List.fold_left
           (fun body (id, lam) -> Llet(Strict, id, lam, body))
@@ -905,7 +905,7 @@ and transl_function loc untuplify_fn repr partial pat_expr_list =
       let param = name_pattern "param" pat_expr_list in
       let ((_, params), body) =
         transl_function exp.exp_loc false repr partial' pl in
-      ((Curried, (param,lt_TODO) :: params),
+      ((Curried, (param,ty_TODO) :: params),
        Matching.for_function loc None (Lvar param) [pat, body] partial)
   | ({pat_desc = Tpat_tuple pl}, _) :: _ when untuplify_fn ->
       begin try
@@ -915,18 +915,18 @@ and transl_function loc untuplify_fn repr partial pat_expr_list =
             (fun (pat, expr) -> (Matching.flatten_pattern size pat, expr))
             pat_expr_list in
         let params = List.map (fun p -> Ident.create "param") pl in
-        ((Tupled, List.map (fun id -> id,lt_TODO) params),
+        ((Tupled, List.map (fun id -> id,ty_TODO) params),
          Matching.for_tupled_function loc params
            (transl_tupled_cases pats_expr_list) partial)
       with Matching.Cannot_flatten ->
         let param = name_pattern "param" pat_expr_list in
-        ((Curried, [param,lt_TODO]),
+        ((Curried, [param,ty_TODO]),
          Matching.for_function loc repr (Lvar param)
            (transl_cases pat_expr_list) partial)
       end
   | _ ->
       let param = name_pattern "param" pat_expr_list in
-      ((Curried, [param,lt_TODO]),
+      ((Curried, [param,ty_TODO]),
        Matching.for_function loc repr (Lvar param)
          (transl_cases pat_expr_list) partial)
 
@@ -951,7 +951,7 @@ and transl_let rec_flag pat_expr_list body =
         let lam = transl_exp expr in
         if not (check_recursive_lambda idlist lam) then
           raise(Error(expr.exp_loc, Illegal_letrec_expr));
-        ((id,lt_TODO), lam) in
+        ((id,ty_TODO), lam) in
       Lletrec(List.map2 transl_case pat_expr_list idlist, body)
 
 and transl_setinstvar self var expr =
