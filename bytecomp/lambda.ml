@@ -137,6 +137,66 @@ type primitive =
 
 (** {1 Expressions of lambda language} *)
 
+module Rref : sig
+  type 'a t
+  val t : 'a -> 'a t
+  val set : 'a t -> 'a -> unit
+  val get : 'a t -> 'a
+
+  type log
+  val protect : (unit -> 'a) -> 'a
+  (*
+    val rollback : log -> unit
+    val record : (unit -> 'a) -> log * 'a
+  *)
+end = struct
+  type 'a t = 'a ref
+
+  type log = 
+    | Unset : 'a * 'a t * log -> log
+    | Done  : log
+
+  let log = ref None
+
+  let t = ref 
+  let get r = !r
+  let set r a =
+    (match !log with
+     | Some l -> l := Unset (!r,r,!l)
+     | None -> ());
+    r := a
+
+  let rec rollback = function
+    | Unset (a,r,log) ->
+      r := a;
+      rollback log
+    | Done -> ()
+
+  let record f =
+    let restore = let previous = !log in
+      fun () -> log := previous
+    in
+    let log' = ref Done in
+    log := Some log';
+    try 
+      let b = f () in
+      restore ();
+      !log', b
+    with exn ->
+      restore ();
+      raise exn
+
+  let protect f = 
+    let log, a = record f in
+    rollback log;
+    a
+end
+
+type 'a rref = 'a Rref.t
+let rref = Rref.t
+let (=:) = Rref.set
+let (!:)  = Rref.get
+
 type lambda =
   | Lvar of Ident.t
   | Lconst of structured_constant
@@ -189,7 +249,7 @@ and lambda_event_kind =
 and ty = 
   | Ty_top
   | Ty_var    of Ident.t
-  | Ty_link   of ty_link ref
+  | Ty_link   of ty_link rref
   | Ty_mu     of Ident.t * ty
   | Ty_forall of Ident.t list * ty
 
@@ -233,12 +293,11 @@ and constraints =
 (** {1 Handling of type errors} *)
 type error =
   | Not_subtype  of ty * ty
-  | Cant_apply   of ty * ty
-  | Unbound_var  of Ident.t
-  | Unbound_tvar of Ident.t
-  | Tvar_capture of Ident.t
   | Fail of string
-
+  (*| Cant_apply   of ty * ty
+    | Unbound_var  of Ident.t
+    | Unbound_tvar of Ident.t
+    | Tvar_capture of Ident.t*)
 exception Error of error
 let error err = raise (Error err)
 
@@ -332,10 +391,12 @@ let ty_const_int = Ty_const Ty_const_int
 let ty_const_float = Ty_const Ty_const_float
 let ty_TODO = Ty_top
 
-let rec ln_repr ln = match !ln with
-  | Ln_bound (id,Ty_link ({contents = Ln_bound _ } as ln')) ->
+let rec ln_repr ln = 
+  let is_bound ln = match !:ln with Ln_bound _ -> true | _ -> false in
+  match !:ln with
+  | Ln_bound (id,Ty_link ln') when is_bound ln' ->
     let v = ln_repr ln' in
-    ln' := v; v
+    ln' =: v; v
   | v -> v
 
 let ty_repr = function
@@ -345,6 +406,8 @@ let ty_repr = function
       | Ln_bound (_,ty') -> ty'
     end
   | ty -> ty
+
+let ty_link ln = Ty_link ln
 
 (** {1 Lambda expressions constructors} *)
 
@@ -697,10 +760,10 @@ let map_type ?(marked=ref IdentSet.empty) f ty =
       | Ty_forall (ids,t)   -> Ty_forall (ids, aux t)
       | Ty_tagged ts        -> Ty_tagged (tagset ts)
       | Ty_link v           -> unlink v; ty
-  and unlink v = match !v with
+  and unlink v = match !:v with
     | Ln_bound (id,t) when not (IdentSet.mem id !marked) ->
       marked := IdentSet.add id !marked;
-      v := Ln_bound (id,aux t)
+      v =: Ln_bound (id,aux t)
     | _ -> ()
   and tagset = function
     | Tag_close | Tag_open as c -> c
@@ -717,7 +780,8 @@ let subst_type s ty =
   let assert_unbound id =
     try
       ignore (Ident.find_same id s);
-      error (Tvar_capture id)
+      failwith "captured variable"
+      (*error (Tvar_capture id)*)
     with Not_found -> ()
   in
   let rec subst ~marked = function
@@ -751,22 +815,7 @@ let rec close_type freshnames ~marked = function
     end
   | _ -> None
 
-(* ************************ *)
-(** {0 Context management} **)
-(* ************************ *)
-
-type context = {
-  ctx_vars     : ty Ident.tbl;
-  ctx_catchers : (int * ty list) list;
-} 
-
-let context_empty = { ctx_vars = Ident.empty ; ctx_catchers = [] }
-
-let is_bound v tbl =
-  try match Ident.find_same v tbl with
-    | _ -> true
-  with Not_found -> false
-
+(* Misc functions *)
 let rec foldl f l acc = match l with
   | x :: xs -> foldl f xs (f x acc)
   | [] -> acc
@@ -788,14 +837,54 @@ let ident_fold f set acc =
   let lst = Ident.keys set in
   foldl (fun id -> f id (Ident.find_same id set)) lst acc
 
-let bind_var id tyarg ctx =
-  { ctx with ctx_vars = Ident.add id tyarg ctx.ctx_vars }
 
-let bind_vars ?(using=bind_var) vars ctx =
-  List.fold_left (fun ctx (id,t) -> using id t ctx) ctx vars
+(* ************************ *)
+(** {0 Context management} **)
+(* ************************ *)
 
-let bind_link id ln ctx = bind_var id (Ty_link ln) ctx
-let fresh_link id = ref (Ln_unbound id)
+type context = {
+  ctx_muvars   : ty Ident.tbl;
+  ctx_freevars : IdentSet.t;
+  ctx_links    : ty_link rref Ident.tbl;
+  ctx_catchers : (int * ty list) list;
+} 
+
+let context_empty = {
+  ctx_muvars = Ident.empty;
+  ctx_links  = Ident.empty;
+  ctx_freevars = IdentSet.empty;
+  ctx_catchers = [];
+}
+
+module AssumSet = Set.Make(struct type t = Ident.t * ty let compare = compare end)
+
+let is_bound v tbl =
+  try match Ident.find_same v tbl with
+    | _ -> true
+  with Not_found -> false
+
+let is_muvar v ctx = is_bound v ctx.ctx_muvars
+let is_freevar v ctx = IdentSet.mem v ctx.ctx_freevars
+let is_link v ctx = is_bound v ctx.ctx_links
+
+let assert_unbound v ctx =
+  if is_freevar v ctx then failwith "variable already marked as free";
+  if is_muvar v ctx then failwith "variable already bound";
+  if is_link v ctx then failwith "variable already linked"
+
+let bind_muvar v tyarg ctx =
+  assert_unbound v ctx;
+  { ctx with ctx_muvars = Ident.add v tyarg ctx.ctx_muvars }
+let muvar v ctx = Ident.find_same v ctx.ctx_muvars
+
+let bind_freevar v ctx =
+  assert_unbound v ctx;
+  { ctx with ctx_freevars = IdentSet.add v ctx.ctx_freevars }
+
+let fresh_link v ctx = 
+  assert_unbound v ctx;
+  let r = rref (Ln_unbound v) in
+  r, { ctx with ctx_links = Ident.add v r ctx.ctx_links }
 
 let bind_catcher tag types ctx =
   { ctx with ctx_catchers = (tag,types) :: ctx.ctx_catchers }
@@ -830,24 +919,6 @@ and tagset_refine ts ctx = match ts with
     snd (context_refine r ctx)
   | _ -> ctx*)
 
-(** Assumptions management, used to implement subtype relation *)
-module AssumSet = Set.Make(struct type t = Ident.t * ty let compare = compare end)
-type assumptions = {
-  as_l  : AssumSet.t; 
-  as_r  : AssumSet.t;
-}
-
-let assuming_l id t { as_l } = AssumSet.mem (id,t) as_l
-let assuming_r t id { as_r } = AssumSet.mem (id,t) as_r
-
-let assum_empty = {
-  as_l  = AssumSet.empty;
-  as_r  = AssumSet.empty;
-}
-
-let assum_l id t assum = { assum with as_l = AssumSet.add (id,t) assum.as_l }
-let assum_r t id assum = { assum with as_r = AssumSet.add (id,t) assum.as_r }
-
 (* ******************************* *)
 (** {0 Unification between types} **)
 (* ******************************* *)
@@ -857,32 +928,23 @@ let rec unify ~assum ~ctx ta tb =
   | Ty_top, Ty_top -> ()
   | Ty_var v, t | t, Ty_var v when AssumSet.mem (v,t) assum -> ()
 
-  | Ty_var v, t | t, Ty_var v when is_bound v ctx.ctx_vars ->
-    unify ~assum:(AssumSet.add (v,t) assum) ~ctx
-      (Ident.find_same v ctx.ctx_vars) t
+  | Ty_var v, t | t, Ty_var v when is_muvar v ctx ->
+    unify ~assum:(AssumSet.add (v,t) assum) ~ctx (muvar v ctx) t
 
-  | Ty_var v1, Ty_var v2 when Ident.same v1 v2 -> ()
+  | Ty_var v1, Ty_var v2 when Ident.same v1 v2 && is_freevar v1 ctx -> ()
 
   | Ty_link ln, t | t, Ty_link ln ->
     unify_link ~assum ~ctx ln t
 
   | Ty_mu (id,def), t | t, Ty_mu (id,def) -> 
-    unify ~assum ~ctx:(bind_var id def ctx) def t
+    unify ~assum ~ctx:(bind_muvar id def ctx) def t
 
   | Ty_forall (ids1,t1), Ty_forall (ids2,t2)
     when List.length ids1 = List.length ids2 ->
-    let links = List.map fresh_link ids1 in
-    let tys = List.map (fun ln -> Ty_link ln) links in
-    let ctx = foldl2 bind_var ids1 tys ctx in
-    let ctx = foldl2 bind_var ids2 tys ctx in
-    let t1' = subst_type (foldl2 Ident.add ids1 tys Ident.empty) t1 in
-    let t2' = subst_type (foldl2 Ident.add ids2 tys Ident.empty) t2 in
-    unify ~assum ~ctx t1' t2';
-    List.iter2 (fun id link -> match !link with
-        | Ln_unbound _ -> ()
-        | Ln_bound (_,ty) ->
-          error (Fail "free variable cannot be instanciated"))
-      ids1 links
+    let typs  = List.map (fun v -> Ty_var (Ident.rename v)) ids1 in
+    let t1' = subst_type (foldl2 Ident.add ids1 typs Ident.empty) t1 in
+    let t2' = subst_type (foldl2 Ident.add ids2 typs Ident.empty) t2 in
+    unify ~assum ~ctx t1' t2'
 
   | Ty_arrow (targ1,tres1), Ty_arrow(targ2,tres2) ->
     unify ~assum ~ctx targ1 targ2;
@@ -892,11 +954,11 @@ let rec unify ~assum ~ctx ta tb =
 
   | Ty_tagged ts1, Ty_tagged ts2 -> unify_tagset ~assum ~ctx ts1 ts2
 
-  | _ -> error (Fail "can't unify")
+  | _ -> failwith "can't unify"
 
 and unify_link ~assum ~ctx ln ty = match ln_repr ln with
   | Ln_unbound id ->
-    ln := Ln_bound (id, ty)
+    ln =: Ln_bound (id, ty)
   | Ln_bound (id,ty') when AssumSet.mem (id,ty) assum -> ()
   | Ln_bound (id,ty') ->
     unify ~assum:(AssumSet.add (id,ty') assum) ~ctx ty' ty
@@ -904,48 +966,75 @@ and unify_link ~assum ~ctx ln ty = match ln_repr ln with
 and unify_tagset ~assum ~ctx ts1 ts2 = match ts1,ts2 with
   | Tag_close, Tag_close | Tag_open, Tag_open -> ()
   | Tag_const (c1,r1,ts1'), Tag_const (c2,r2,ts2') when c1 = c2 ->
-    ignore (unify_constraints ~assum ~ctx r1 r2);
+    ignore (unify_constraints ~assum ~ctx ~refine:false r1 r2);
     unify_tagset ~assum ~ctx ts1' ts2'
 
   | Tag_block (c1,r1,p1,ts1'), Tag_block (c2,r2,p2,ts2') 
     when c1 = c2 && List.length p1 = List.length p2 ->
-    let lazy constraintss = unify_constraints ~assum ~ctx r1 r2 in
-    let ctx = refine_context ~assum ~ctx constraintss in
+    let constraints = unify_constraints ~assum ~ctx r1 r2 in
+    let ctx = refine_context ~assum ~ctx constraints in
     List.iter2 (unify ~assum ~ctx) p1 p2
 
-  | _ -> error (Fail "can't unify")
+  | _ -> failwith "can't unify"
 
-and unify_constraints ~assum ~ctx (ids1,binds1) (ids2,binds2) =
-  let ids  = ids1 @ ids2 in
-  let ids' = List.map Ident.rename ids in
-  let freshnames = foldl IdentSet.add ids' IdentSet.empty in
-  let vars = List.map fresh_link ids' in
-  let lnks = List.map (fun ln -> Ty_link ln) vars in
-  let subst = foldl2 Ident.add ids lnks Ident.empty in
-  let unified = Ident.empty in
-  let unified = foldl
-      (fun (id,ty) unified -> 
-        let ty = subst_type subst ty in
-        try 
-          let ty' = Ident.find_same id unified in
-          unify ~assum ~ctx ty ty';
-          unified
-        with Not_found -> Ident.add id ty unified)
-      (binds1 @ binds2) unified
+and unify_constraints ~assum ~ctx ~refine (ids1,binds1) (ids2,binds2) =
+  let freshvars = ref Ident.empty in
+  let rctx = ref ctx in
+  let refresh ids binds =
+    let ids' = List.map Ident.rename ids in
+    let vars = List.map (fun id ->
+        let r, ctx' = fresh_link id !rctx in
+        rctx := ctx'; r)
+        ids'
+    in
+    freshvars := foldl2 Ident.add ids' vars !freshvars;
+    let s = foldl2 Ident.add ids' (List.map ty_link vars) Ident.empty in
+    list_assoc_map (subst_type s) binds
   in
-  lazy (let marked = ref IdentSet.empty in
-  let bindings = ident_fold
-      (fun id ty tail -> (id, map_type ~marked 
-                            (close_type freshnames) ty) :: tail)
-      unified []
+  let binds1 = refresh ids1 binds1 and binds2 = refresh ids2 binds2 in
+  let ctx' = !rctx in
+  let process () = 
+    let aux (id,ty) unified =
+      try 
+        let ty' = Ident.find_same id unified in
+        unify ~assum ~ctx:ctx' ty ty';
+        unified
+      with Not_found -> 
+        let unified = Ident.add id ty unified in
+        let _ =
+          try 
+            let ln = Ident.find_same id ctx'.ctx_links in
+            unify ~assum ~ctx:ctx' ty (Ty_link ln)
+          with Not_found -> ()
+        in
+        unified
+    in
+    let unified = foldl aux (binds1 @ binds2) Ident.empty in
+    let freshnames = ident_fold 
+        (fun id _ -> IdentSet.add id) !freshvars IdentSet.empty
+    and freevars = ident_fold
+        begin fun v ln lst ->
+          match ln_repr ln with
+          | Ln_bound _ -> lst
+          | Ln_unbound id -> id :: lst
+        end 
+        !freshvars []
+    in
+    let marked = ref IdentSet.empty in
+    let bindings = ident_fold
+        (fun id ty tail -> (id, map_type ~marked 
+                              (close_type freshnames) ty) :: tail)
+        unified []
+    in
+    (freevars, bindings)
   in
-  let freevars = list_filter_map
-      (fun v -> match !v with
-         | Ln_bound _ -> None
-         | Ln_unbound id -> Some id)
-      vars
-  in
-  (freevars, bindings))
+  if not refine then
+    ctx, Rref.protect process
+  else
+  begin
+    let ctx = List.fold_left (fun (id,ty) ->
+    ctx, process ()
+  end
 
 and refine_context ~assum ~ctx (ids,bindings as constraints) =
   let conflicting = list_filter_map
@@ -984,6 +1073,23 @@ and refine_context ~assum ~ctx (ids,bindings as constraints) =
 (* ************************ *)
 (** {0 Subtyping relation} **)
 (* ************************ *)
+
+(** Assumptions management, used to implement subtype relation *)
+type assumptions = {
+  as_l  : AssumSet.t; 
+  as_r  : AssumSet.t;
+}
+
+let assuming_l id t { as_l } = AssumSet.mem (id,t) as_l
+let assuming_r t id { as_r } = AssumSet.mem (id,t) as_r
+
+let assum_empty = {
+  as_l  = AssumSet.empty;
+  as_r  = AssumSet.empty;
+}
+
+let assum_l id t assum = { assum with as_l = AssumSet.add (id,t) assum.as_l }
+let assum_r t id assum = { assum with as_r = AssumSet.add (id,t) assum.as_r }
 
 (*let rec compare_type ~subtype ~assum ~ctx t1 t2 =
   let compare_type ?(assum=assum) ?(ctx=ctx) ?(subtype=subtype) t1 t2 =
