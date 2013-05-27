@@ -182,3 +182,5 @@ let rec keys_aux stack accu = function
       keys_aux (l :: stack) (k.ident :: accu) r
 
 let keys tbl = keys_aux [] [] tbl
+
+let compare = compare
